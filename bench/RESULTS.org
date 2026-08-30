@@ -11,26 +11,31 @@ Each process result is the median of seven samples.
 | ~is_enabled~, no directives                   |        4.079 |       3.389 | -16.9% |               0 |              0 |
 | disabled PPX event                            |        4.192 |       3.654 | -12.8% |               0 |              0 |
 | enabled event, null renderer                  |        4.620 |       3.687 | -20.2% |               0 |              0 |
-| enabled PPX event with integer field          |       52.530 |      49.267 |  -6.2% |           7.969 |          7.969 |
+| enabled PPX event with integer field          |       52.530 |       7.871 | -85.0% |           7.969 |          7.969 |
 | disabled instrumented function                |        6.459 |       3.975 | -38.5% |           3.985 |              0 |
 | disabled direct span                          |        5.925 |       3.660 | -38.2% |           3.985 |              0 |
 | enabled instrumented function, null renderer  |       44.111 |      39.503 | -10.4% |          20.971 |         16.515 |
 | enabled direct span, null renderer             |       42.762 |      39.500 |  -7.6% |          20.971 |         16.515 |
 | one matching target directive                 |       10.887 |       9.517 | -12.6% |               0 |              0 |
 
-Worst-case signed ~int~ plus ~int64~ span-exit formatting was measured after
-introducing the incremental renderer. Replacing ~string_of_int~ /
+Worst-case signed ~int~ plus ~int64~ span-exit formatting was isolated before
+bounded chunk flushing was added. Replacing ~string_of_int~ /
 ~Int64.to_string~ with C ~noalloc~ conversion into one domain-local 21-byte
-scratch area changed the path from 232.760 ns/op and 7.340 words/op to 159.684
+scratch area changed that path from 232.760 ns/op and 7.340 words/op to 159.684
 ns/op and zero words/op: a 31.4% latency reduction. The bound includes the sign
-and every digit of ~min_int~ and ~Int64.min_int~.
+and every digit of ~min_int~ and ~Int64.min_int~. Current end-to-end renderer
+measurements include amortized chunk materialization and writes rather than
+attributing those allocations to decimal conversion.
 
 An OCaml recursive-digit implementation was rejected before the C version.
 Boxed recursive ~int64~ division increased the same path to 52.429 words/op.
 The output chunk itself is not reserved per line. It begins at 4 KiB and keeps
-its amortized growth until flush; reserving each line would add work without
-avoiding a copy through ~Stdlib.Buffer~'s public API. The 21-byte numeric
-scratch is the allocation where a fixed bound is both available and useful.
+its amortized growth until a root span closes or a complete line takes the
+chunk to 64 KiB, then resets to its initial allocation. A single unusually
+large line is allowed to exceed the threshold so output is never split inside
+a line. Reserving each line would add work without avoiding a copy through
+~Stdlib.Buffer~'s public API. The 21-byte numeric scratch is the allocation
+where a fixed bound is both available and useful.
 
 Direct incremental rendering removed ~Printf.sprintf~, intermediate field
 lists, breadcrumb strings, and complete-line concatenation from renderer hot
@@ -39,8 +44,8 @@ before / after order.
 
 | Renderer event | Before ns/op | After ns/op | Change | Before words/op | After words/op |
 |----------------+--------------+-------------+--------+-----------------+----------------|
-| tree           |      224.747 |      83.930 | -62.7% |          91.937 |          7.864 |
-| flat           |      186.633 |      80.067 | -57.1% |          89.481 |          7.864 |
+| tree           |      224.747 |      35.355 | -84.3% |          91.937 |         17.587 |
+| flat           |      186.633 |      33.706 | -81.9% |          89.481 |         17.587 |
 
 ** Inlining Experiments
 
@@ -67,6 +72,67 @@ closures in the measured optimized build, so this was neutral there. In the
 opaque development profile, disabled instrumentation remained at zero words/op
 instead of the original 3.985 words/op.
 
+** Span Timing
+
+The original implementation used ~Unix.gettimeofday~, which is a wall clock
+and can move backwards. Span timing now defaults to a small C
+~CLOCK_MONOTONIC~ stub. On x86 systems which report an invariant timestamp
+counter, ~DELATOR_CLOCK=tsc~ enables a calibrated approximate clock. Raw ticks
+are retained between span entry and exit so conversion to nanoseconds happens
+only once.
+
+| Workload                         | Monotonic ns/op | TSC ns/op | Change | Monotonic words/op | TSC words/op |
+|----------------------------------+-----------------+-----------+--------+--------------------+--------------|
+| one clock reading                |          15.735 |     8.957 | -43.1% |              2.988 |        5.977 |
+| enabled span, null renderer      |          67.994 |    59.937 | -11.9% |             23.986 |       23.986 |
+
+These values use the same pinned core and release profile as the other tables.
+The direct TSC ~now_ns~ operation allocates during tick-to-nanosecond
+conversion; the actual span path avoids a second conversion and has unchanged
+allocation pressure. Monotonic remains the default because it has stronger
+cross-platform and cross-core guarantees.
+
 These are microbenchmarks rather than end-to-end compiler throughput. They
 should be rerun on the target deployment machine before using the absolute
 latency values as a capacity estimate.
+
+** ocaml-trace Comparison
+
+The comparison harness pins
+[[https://github.com/ocaml-tracing/ocaml-trace/commit/13b7b6669e22a04c1c5c85cf422880873dec7180][ocaml-trace commit ~13b7b66~]] and builds both libraries with OxCaml
+~5.2.0+ox~ in dune's ~release~ profile. The run below used the same Intel Core
+Ultra 5 125U and was pinned to core 2. Each value is the median of nine samples;
+the benchmark rotates measurement order between samples. Enabled operations
+dispatch into no-op collectors so backend serialization and I/O do not distort
+the instrumentation cost. The harness cleans and rebuilds the pinned
+~ocaml-trace~ checkout for each invocation.
+
+| Workload                    | Baseline ns/op | Delator ns/op | ocaml-trace ns/op | Delator vs trace | Delator words/op | ocaml-trace words/op |
+|-----------------------------+----------------+---------------+-------------------+------------------+------------------+----------------------|
+| disabled event              |          2.002 |         3.603 |             2.186 |     64.8% slower |            0.000 |                0.000 |
+| disabled event, integer data |          1.903 |         3.172 |             2.395 |     32.4% slower |            0.000 |                3.985 |
+| disabled span               |          1.810 |         3.289 |             2.762 |     19.1% slower |            0.000 |                3.985 |
+| enabled event               |          1.809 |         5.854 |             6.357 |      7.9% faster |            0.000 |                0.000 |
+| enabled event, integer data |          1.791 |         5.331 |             8.139 |     34.5% faster |            7.969 |               14.995 |
+| enabled span                |          1.786 |        37.987 |            11.991 |    216.8% slower |           16.515 |                3.670 |
+
+The integer-data benchmark found that ~Field.int~ still eagerly called
+~string_of_int~, despite IDs and durations already using the C formatter.
+Representing integer fields as integers until rendering and writing them
+through the domain-local decimal scratch reduced Delator's enabled integer
+event from 43.046 ns/op to 5.331 ns/op on this run. The field list still
+accounts for 7.969 words/op; removing that requires a local-mode boundary
+through the renderer interface rather than merely another inline annotation.
+
+The disabled ~ocaml-trace~ data and span operations allocate their callback
+closures under this OxCaml build. Delator's PPX and local-mode span API keep
+those paths at zero allocation. Conversely, the enabled span row includes work
+that Delator owns in its core: a span ID, domain-local nesting, and timing.
+~ocaml-trace~ delegates timing and ambient parent tracking to its collector;
+the no-op comparison collector does neither. The span row therefore describes
+core instrumentation cost, not equivalent end-to-end trace output.
+
+Static elision is not in the table because ~ocaml-trace~ has no corresponding
+compile-time removal. The baseline operation is retained in each process to
+show the loop and opaque-consumer floor; the table reports absolute times
+rather than subtracting that noisy sub-two-nanosecond value.

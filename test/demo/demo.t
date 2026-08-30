@@ -23,6 +23,7 @@
   $ test "$(grep -c ': event ' multi.out)" = 100
   $ test "$(grep -c 'span.new=domain' multi.out)" = 2
   $ test "$(grep -c '^SPAN ' multi.out)" = 2
+  $ test "$(grep -c 'domain-exit-tail' multi.out)" = 1
   $ test "$(grep -vcE '^(INFO|SPAN) ' multi.out)" = 0
   $ rm multi.out
 
@@ -45,3 +46,14 @@
   span#0 close duration_ns=0
   span#4611686018427387903 close duration_ns=9223372036854775807
   span#-4611686018427387904 close duration_ns=-9223372036854775808
+
+  $ DELATOR_LOG=trace DELATOR_COLOR=always DELATOR_TEST_CLOCK=1 ./lowering_demo.exe > color.out 2>&1
+  $ grep -Fq "$(printf '\033[36mDEBUG\033[0m')" color.out
+  $ grep -Fq "$(printf '\033[32mINFO\033[0m')" color.out
+  $ grep -Fq "$(printf '\033[33mWARN\033[0m')" color.out
+  $ grep -Fq "$(printf '\033[35mspan#\033[0m')" color.out
+  $ rm color.out
+
+  $ DELATOR_LOG=trace DELATOR_COLOR=never DELATOR_TEST_CLOCK=1 ./lowering_demo.exe > no-color.out 2>&1
+  $ test "$(LC_ALL=C tr -cd '\033' < no-color.out | wc -c)" = 0
+  $ rm no-color.out

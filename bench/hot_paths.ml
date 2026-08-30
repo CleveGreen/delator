@@ -38,6 +38,8 @@ let report name iterations operation =
 
 let consumed = ref 0
 let consume value = consumed := Sys.opaque_identity value
+let consumed_time = ref 0L
+let consume_time value = consumed_time := Sys.opaque_identity value
 
 module Null_renderer : Delator.Renderer.S = struct
   let on_new_span ~id:_ ~parent:_ ~name:_ ~target:_ ~level:_ ~fields:_ = ()
@@ -73,6 +75,8 @@ let direct_span value () =
   consume
     (Delator.in_span ~level:Debug ~target:"bench" ~name:"span"
        (fun () -> value + 1))
+
+let clock_now () = consume_time (Delator.Clock.now_ns ())
 
 let tree_exit =
   let module Tree = (val Delator.Renderer.tree) in
@@ -117,6 +121,22 @@ let run name =
       Delator.Renderer.set_current (module Null_renderer);
       Delator.Clock.set (fun () -> 0L);
       report name (iterations_from_env 2_000_000) (direct_span 41)
+  | "clock_monotonic" ->
+      Delator.Clock.use_monotonic ();
+      report name (iterations_from_env 10_000_000) clock_now
+  | "clock_tsc" ->
+      Delator.Clock.use_tsc ();
+      report name (iterations_from_env 10_000_000) clock_now
+  | "span_enabled_monotonic" ->
+      Delator.set_default_level Trace;
+      Delator.Renderer.set_current (module Null_renderer);
+      Delator.Clock.use_monotonic ();
+      report name (iterations_from_env 2_000_000) (direct_span 41)
+  | "span_enabled_tsc" ->
+      Delator.set_default_level Trace;
+      Delator.Renderer.set_current (module Null_renderer);
+      Delator.Clock.use_tsc ();
+      report name (iterations_from_env 2_000_000) (direct_span 41)
   | "tree_event" ->
       Delator.set_default_level Trace;
       report name (iterations_from_env 500_000) direct_event
@@ -127,7 +147,7 @@ let run name =
 let () =
   if Array.length Sys.argv <> 2 then begin
     prerr_endline
-      "usage: hot_paths.exe {baseline|is_enabled|is_enabled_directive|ppx_disabled|event_enabled_null|ppx_enabled_null|instrument_disabled|instrument_inline_disabled|instrument_enabled_null|span_disabled|span_enabled_null|tree_event|tree_exit}";
+      "usage: hot_paths.exe {baseline|is_enabled|is_enabled_directive|ppx_disabled|event_enabled_null|ppx_enabled_null|instrument_disabled|instrument_inline_disabled|instrument_enabled_null|span_disabled|span_enabled_null|clock_monotonic|clock_tsc|span_enabled_monotonic|span_enabled_tsc|tree_event|tree_exit}";
     exit 2
   end;
   run Sys.argv.(1)

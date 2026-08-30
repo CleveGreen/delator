@@ -1,6 +1,10 @@
 module Level = Level
 module Field = Field
 module Renderer = Renderer
+module Color = struct
+  let is_enabled = Level.is_color_enabled
+  let set_enabled = Level.set_color_enabled
+end
 module Clock = Clock
 module Runtime = Runtime
 

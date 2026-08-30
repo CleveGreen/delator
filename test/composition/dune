@@ -8,4 +8,5 @@
  (name composition)
  (modules composition)
  (libraries delator)
- (preprocess (pps dummy_current_ast delator.ppx)))
+ (preprocess
+  (pps dummy_current_ast delator.ppx -- --static-level=info)))

@@ -1,0 +1,20 @@
+# Local build and environment state
+_build/
+_build-*/
+_opam/
+.direnv/
+result
+*.install
+
+# Agent workflow scratch state
+.agent-workspace/
+
+# Local profiling captures
+perf.data*
+perf.folded
+perf.out
+flame.svg
+
+# Explicit verifier dumps
+*.sst
+*.vir

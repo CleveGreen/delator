@@ -1,3 +1,6 @@
+[@@@alert "-unsafe_multidomain"]
+[@@@alert "-do_not_spawn_domains"]
+
 let emit domain =
   Delator.in_span ~level:Info ~target:"multi" ~name:("domain" ^ string_of_int domain)
     (fun () ->
@@ -8,6 +11,11 @@ let emit domain =
       done)
 
 let () =
-  let child = Domain.spawn (fun () -> emit 1) in
+  let child =
+    Domain.spawn (fun () ->
+        emit 1;
+        Delator.Runtime.event ~target:"multi" ~level:Info
+          ~msg:"domain-exit-tail" ~fields:[])
+  in
   emit 0;
   Domain.join child

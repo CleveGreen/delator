@@ -16,6 +16,20 @@ The runtime and PPX are tested against OxCaml ~5.2.0+ox~ and ppxlib
 ~0.33.0+ox~. A stock OCaml build is also kept working, but OxCaml is the primary
 target and is where the performance-sensitive implementation is tested.
 
+** Install
+
+From a checkout:
+
+#+BEGIN_SRC sh
+
+opam install .
+
+#+END_SRC
+
+Applications add ~delator~ to their libraries and ~delator.ppx~ to their PPX
+pipeline. The package requires OCaml 5.2 or newer, dune 3.17 or newer, and
+ppxlib 0.33 or newer.
+
 ** Design
 
 *** Compile-Time Log Levels
@@ -60,9 +74,11 @@ Instrumentation defaults to ~Debug~. It also supports
 *** Multicore Coherence
 
 Each domain writes eagerly into its own buffer. Closing a root span flushes the
-complete domain chunk while holding one global sink mutex. Output from
-different domains has no total ordering, but a domain's own subtree is not
-split into interleaved lines.
+domain chunk while holding one global sink mutex. A chunk is also flushed at
+64 KiB and when its domain exits, so event-only child domains do not lose their
+tail and a long-lived span cannot grow its buffer without a bound. Output from
+different domains has no total ordering, but complete lines are never split or
+interleaved.
 
 Values are formatted when the event occurs. Deferring formatting until flush
 would be incorrect for mutable compiler structures because the value could
@@ -82,7 +98,9 @@ cross-unit optimization to sink those closures into the enabled branch.
 The renderer writes directly into a 4 KiB domain-local output chunk. Each
 domain also owns one 21-byte decimal scratch area, large enough for the sign and
 digits of every OCaml ~int~ and ~int64~. Small C ~noalloc~ stubs format numbers
-directly into this area rather than allocating temporary strings.
+directly into this area rather than allocating temporary strings. Integer
+fields retain their numeric representation until the renderer reaches them;
+they do not call ~string_of_int~ on the event path.
 
 ** Events
 
@@ -108,15 +126,27 @@ a string field. Other values use an explicit converter:
   default filter. The longest matching target prefix wins.
 - ~DELATOR_FORMAT=flat~ selects breadcrumb lines instead of the default span
   tree.
+- ~DELATOR_COLOR=auto|always|never~ colors level labels and span markers. The
+  default is ~auto~, which colors only a terminal, honors ~NO_COLOR~, and
+  disables color for ~TERM=dumb~. ~1~ and ~0~ are aliases for ~always~ and
+  ~never~.
 - ~DELATOR_UNBUFFERED=1~ writes each complete line through immediately for
   crash diagnosis.
+- ~DELATOR_CLOCK=monotonic|tsc~ selects span timing. ~monotonic~ is the
+  portable default. ~tsc~ reads the processor timestamp counter after a
+  one-time calibration and is accepted only when the CPU reports an invariant
+  TSC; it is intended for lower-overhead approximate durations in logs.
 - ~DELATOR_STATIC_LEVEL~ controls PPX elision when it is passed through the
   dune stanza shown above.
 
-Runtime levels should normally be configured before spawning domains. The
-default level is a plain immediate reference. OCaml permits a concurrent read
-to observe an older immediate value without tearing, so later changes propagate
-eventually rather than providing a synchronization point.
+Runtime levels, renderer, color, and clock should normally be configured before
+spawning domains. The default level is a plain immediate reference. OCaml
+permits a concurrent read to observe an older immediate value without tearing,
+so later level changes propagate eventually rather than providing a
+synchronization point. Do not change the clock source while spans are active.
+
+Color can also be changed after initialization with
+~Delator.Color.set_enabled~.
 
 ** OxCaml / OCaml Compatibility
 
@@ -127,8 +157,13 @@ The split exists in two places for two different reasons:
 
 - ~delator_ox.ml~ and ~delator_ox.mli~ expose OxCaml's ~local~ closure modes.
   The stock parser does not understand that syntax.
-- ~delator_ppx_rewriter_ox.ml~ handles OxCaml's unified function AST. Stock
-  ppxlib exposes an older stable AST with different constructors.
+- ~delator_ppx_rewriter_ox.ml~ handles OxCaml's unified function AST and emits
+  mode annotations.
+- ~delator_ppx_rewriter_stock.ml~ handles the older stable AST exposed by
+  ppxlib before 0.36.
+- ~delator_ppx_rewriter_unified_stock.ml~ handles ppxlib 0.36 and newer, whose
+  function AST is unified but which does not contain OxCaml's mode
+  constructors.
 
 Keeping these variants separate is less clever than hiding them behind another
 source preprocessor and makes it clear which compatibility boundary is being
@@ -176,8 +211,39 @@ _build/default/bench/hot_paths.exe ppx_disabled
 DELATOR_LOG='lowering=trace,info' \
   _build/default/bench/hot_paths.exe is_enabled_directive
 _build/default/bench/hot_paths.exe instrument_disabled
+_build/default/bench/hot_paths.exe clock_monotonic
+_build/default/bench/hot_paths.exe clock_tsc
+_build/default/bench/hot_paths.exe span_enabled_monotonic
+_build/default/bench/hot_paths.exe span_enabled_tsc
 
 #+END_SRC
+
+The cross-library harness pins ~ocaml-trace~ to commit
+~13b7b6669e22a04c1c5c85cf422880873dec7180~, builds its ~trace.core~ package
+with the active compiler, and compares disabled and enabled events and spans.
+Enabled workloads use no-op collectors on both sides so the result measures
+instrumentation rather than unrelated output formats. The first run needs
+~git~ and network access; the checkout and installation remain under
+~_build/~.
+It runs ~dune clean~ in the pinned ~ocaml-trace~ checkout before every build so
+no result depends on a previously compiled competitor artifact.
+
+#+BEGIN_SRC sh
+
+nix develop ../verocaml --command \
+  taskset -c 2 bench/compare-ocaml-trace disabled_event
+nix develop ../verocaml --command \
+  taskset -c 2 bench/compare-ocaml-trace enabled_event_field
+nix develop ../verocaml --command \
+  taskset -c 2 bench/compare-ocaml-trace enabled_span
+
+#+END_SRC
+
+Available workloads are ~disabled_event~, ~disabled_event_field~,
+~disabled_span~, ~enabled_event~, ~enabled_event_field~, and ~enabled_span~.
+Set ~DELATOR_BENCH_ITERS~ to override the iteration count. Delator's static
+elision has no ~ocaml-trace~ equivalent and remains in the separate
+~static_elision.exe~ benchmark.
 
 ~DELATOR_BENCH_ITERS~ overrides a benchmark's default iteration count.
 ~tree_event~ exercises actual rendering and should be run with stderr redirected

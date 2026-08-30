@@ -7,3 +7,4 @@ val int : int -> value
 val bool : bool -> value
 val exn : exn -> value
 val render : value -> string
+val add_to_buffer : scratch:bytes -> Stdlib.Buffer.t -> value -> unit

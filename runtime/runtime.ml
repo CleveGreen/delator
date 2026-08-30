@@ -12,6 +12,7 @@ let initialize () =
         Clock.configure_from_env ();
         Filter.configure_from_env ();
         Buffer.configure_from_env ();
+        Level.configure_color_from_env ();
         Renderer.configure_from_env ();
         Buffer.install_at_exit ();
         initialized := true

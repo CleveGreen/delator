@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  stock-ocaml:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ocaml-compiler: ["5.2", "5.3", "5.4"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ocaml/setup-ocaml@f92e0606b7ae4873dd1238465ea4bf6f8e40d85c
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-compiler }}
+          dune-cache: false
+      - run: opam install . --deps-only --with-test
+      - run: opam exec -- dune build --profile release @all
+      - run: opam exec -- dune runtest
+      - run: opam lint delator.opam

@@ -7,12 +7,15 @@ license: "MIT"
 homepage: "https://github.com/CleveGreen/delator"
 bug-reports: "https://github.com/CleveGreen/delator/issues"
 dev-repo: "git+https://github.com/CleveGreen/delator.git"
+tags: ["logging" "tracing" "observability" "performance" "oxcaml"]
 depends: [
   "ocaml" {>= "5.2"}
   "dune" {>= "3.17"}
   "ppxlib" {>= "0.33.0"}
+  "base-unix"
 ]
 build: [
   ["dune" "subst"] {dev}
   ["dune" "build" "-p" name "-j" jobs]
+  ["dune" "runtest" "-p" name "-j" jobs] {with-test}
 ]

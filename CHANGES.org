@@ -1,0 +1,10 @@
+* 0.1.0 - 2026-08-30
+
+Initial public release.
+
+- Structured events, nested spans, target-prefix filtering, tree and flat text
+  renderers, terminal color, and domain-local 64 KiB chunk buffering.
+- PPX event syntax, function instrumentation, and compile-time level elision.
+- OxCaml local-mode instrumentation with stock OCaml 5.2 through 5.4
+  compatibility.
+- Monotonic span timing with an opt-in calibrated invariant-TSC clock.

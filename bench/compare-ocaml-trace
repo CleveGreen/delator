@@ -1,0 +1,43 @@
+#!/bin/sh
+set -eu
+
+revision=13b7b6669e22a04c1c5c85cf422880873dec7180
+repository=https://github.com/ocaml-tracing/ocaml-trace.git
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+source_dir="$root/_build/ocaml-trace-$revision"
+trace_prefix="$root/_build/ocaml-trace-$revision-install"
+delator_prefix="$root/_build/delator-comparison-install"
+project="$root/_build/ocaml-trace-comparison-project"
+
+if test ! -d "$source_dir/.git"; then
+  git clone --filter=blob:none --no-checkout "$repository" "$source_dir"
+  git -C "$source_dir" checkout --detach "$revision"
+fi
+
+dune clean --root "$source_dir"
+dune build --root "$source_dir" --profile release trace.install
+dune install --root "$source_dir" trace --prefix "$trace_prefix"
+
+dune build --root "$root" --profile release delator.install
+dune install --root "$root" delator --prefix "$delator_prefix"
+
+mkdir -p "$project"
+cp "$root/bench/compare_ocaml_trace.ml" "$project/compare_ocaml_trace.ml"
+cat > "$project/dune-project" <<'EOF'
+(lang dune 3.17)
+(name delator_trace_comparison)
+EOF
+cat > "$project/dune" <<'EOF'
+(executable
+ (name compare_ocaml_trace)
+ (libraries delator trace.core unix)
+ (preprocess (pps delator.ppx -- --static-level=trace)))
+EOF
+
+OCAMLPATH="$delator_prefix/lib:$trace_prefix/lib${OCAMLPATH:+:$OCAMLPATH}"
+export OCAMLPATH
+export DELATOR_LOG=info
+export DELATOR_COLOR=never
+
+dune build --root "$project" --profile release compare_ocaml_trace.exe
+exec "$project/_build/default/compare_ocaml_trace.exe" "$@"

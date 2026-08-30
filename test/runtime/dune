@@ -8,3 +8,7 @@
 (test
  (name level_check)
  (libraries delator))
+
+(test
+ (name safety_check)
+ (libraries delator))

@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+
+compiler_version=$1
+ppxlib_meta=$2
+target=$3
+
+case "$compiler_version" in
+  *+ox*)
+    cp delator_ppx_rewriter_ox.ml "$target"
+    ;;
+  *)
+    version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ppxlib_meta" | head -1)
+    major=$(echo "$version" | cut -d. -f1)
+    minor=$(echo "$version" | cut -d. -f2)
+    case "$major:$minor" in
+      *[!0-9:]*|:|*:)
+        echo "delator.ppx: cannot determine ppxlib AST version from $ppxlib_meta" >&2
+        exit 2
+        ;;
+    esac
+    if test "$major" -ge 1 || test "$minor" -ge 36; then
+      cp delator_ppx_rewriter_unified_stock.ml "$target"
+    else
+      cp delator_ppx_rewriter_stock.ml "$target"
+    fi
+    ;;
+esac

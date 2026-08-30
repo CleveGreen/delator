@@ -1,7 +1,16 @@
 module Level = Level
 module Field = Field
 module Renderer = Renderer
-module Clock = Clock
+module Color : sig
+  val is_enabled : unit -> bool
+  val set_enabled : bool -> unit
+end
+module Clock : sig
+  val now_ns : unit -> int64
+  val set : (unit -> int64) -> unit
+  val use_monotonic : unit -> unit
+  val use_tsc : unit -> unit
+end
 module Runtime = Runtime
 
 type level = Level.t = Trace | Debug | Info | Warn | Error

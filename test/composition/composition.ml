@@ -1,1 +1,1 @@
-let () = [%log.info "composed"]
+let () = [%log.debug "composition probe" ~missing]

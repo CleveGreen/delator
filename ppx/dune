@@ -1,9 +1,17 @@
 (rule
  (target delator_ppx_rewriter_selected.ml)
- (deps delator_ppx_rewriter_ox.ml delator_ppx_rewriter_stock.ml)
+ (deps
+  delator_ppx_rewriter_ox.ml
+  delator_ppx_rewriter_stock.ml
+  delator_ppx_rewriter_unified_stock.ml
+  select-rewriter
+  %{lib:ppxlib:META})
  (action
-  (bash
-   "case '%{ocaml-config:version}' in *+ox*) cp delator_ppx_rewriter_ox.ml %{target} ;; *) cp delator_ppx_rewriter_stock.ml %{target} ;; esac")))
+  (run
+   ./select-rewriter
+   %{ocaml-config:version}
+   %{lib:ppxlib:META}
+   %{target})))
 
 (library
  (name delator_ppx)
