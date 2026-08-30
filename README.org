@@ -1,0 +1,192 @@
+* delator
+
+delator is a tracing library for OCaml 5.2 and OxCaml. It is being built for
+the developers of vērōcaml, where understanding how a value moved through a
+compiler lowering pipeline is often more useful than a large amount of
+ordinary logging.
+
+delator provides nested spans, structured fields, target filters, domain-local
+buffering, and PPX function instrumentation. Log levels may be removed by the
+PPX before the OCaml compiler sees them.
+
+** Status
+
+delator is young and its first consumer is still being developed alongside it.
+The runtime and PPX are tested against OxCaml ~5.2.0+ox~ and ppxlib
+~0.33.0+ox~. A stock OCaml build is also kept working, but OxCaml is the primary
+target and is where the performance-sensitive implementation is tested.
+
+** Design
+
+*** Compile-Time Log Levels
+
+A statically disabled log expands to ~()~. Its fields are not evaluated and
+variables in the payload are not referenced by the generated program. This is
+intended for hot compiler code where a runtime branch is still too expensive.
+
+The static level should be passed through dune rather than read only with
+~Sys.getenv~ inside the PPX. This makes the selected level part of dune's cache
+key:
+
+#+BEGIN_SRC lisp
+
+(preprocess
+ (pps delator.ppx -- --static-level=%{env:DELATOR_STATIC_LEVEL=trace}))
+
+#+END_SRC
+
+*** Low Boilerplate
+
+Events are small expressions and functions may be instrumented with an
+attribute. Fields which need conversion say how to convert themselves rather
+than relying on runtime type inspection.
+
+#+BEGIN_SRC ocaml
+
+let lower (name [@delator.field Fun.id]) =
+  [%log.debug "starting lowering" ~name];
+  [%log.info "lowered node" ~node:(Delator.Field.int 42)]
+[@@delator.instrument]
+
+#+END_SRC
+
+Instrumentation defaults to ~Debug~. It also supports
+~[@@delator.level trace]~, ~[@@delator.skip_all]~, and
+~[@@delator.no_exn_log]~. Parameters may use
+~[@delator.field converter]~, ~[@delator.field.pp printer]~, or
+~[@delator.skip]~. A parameter without a converter is represented as
+~<opaque>~.
+
+*** Multicore Coherence
+
+Each domain writes eagerly into its own buffer. Closing a root span flushes the
+complete domain chunk while holding one global sink mutex. Output from
+different domains has no total ordering, but a domain's own subtree is not
+split into interleaved lines.
+
+Values are formatted when the event occurs. Deferring formatting until flush
+would be incorrect for mutable compiler structures because the value could
+change before it is rendered.
+
+*** Performance
+
+The dynamically disabled event path is one filter branch and zero allocation.
+Target filtering has specialized paths for zero or one directive, which are
+the common configurations.
+
+On OxCaml, the instrumentation PPX emits ~stack_~ field and action closures and
+~Delator.in_span~ accepts them at ~local~. This keeps them from escaping even
+in opaque development builds. The stock OCaml implementation relies on release
+cross-unit optimization to sink those closures into the enabled branch.
+
+The renderer writes directly into a 4 KiB domain-local output chunk. Each
+domain also owns one 21-byte decimal scratch area, large enough for the sign and
+digits of every OCaml ~int~ and ~int64~. Small C ~noalloc~ stubs format numbers
+directly into this area rather than allocating temporary strings.
+
+** Events
+
+The event extensions are ~[%log.trace]~, ~[%log.debug]~, ~[%log.info]~,
+~[%log.warn]~, and ~[%log.error]~. The ~[%delator.LEVEL]~ spelling is available
+as an alias.
+
+Messages must be string literals. A field pun such as =~name= is shorthand for
+a string field. Other values use an explicit converter:
+
+#+BEGIN_SRC ocaml
+
+[%log.info "lowered node"
+  ~name
+  ~node:(Delator.Field.int node)
+  ~typ:(Delator.Field.pp Type.pp typ)]
+
+#+END_SRC
+
+** Configuration
+
+- ~DELATOR_LOG=lowering=trace,info~ sets target-prefix directives and the
+  default filter. The longest matching target prefix wins.
+- ~DELATOR_FORMAT=flat~ selects breadcrumb lines instead of the default span
+  tree.
+- ~DELATOR_UNBUFFERED=1~ writes each complete line through immediately for
+  crash diagnosis.
+- ~DELATOR_STATIC_LEVEL~ controls PPX elision when it is passed through the
+  dune stanza shown above.
+
+Runtime levels should normally be configured before spawning domains. The
+default level is a plain immediate reference. OCaml permits a concurrent read
+to observe an older immediate value without tearing, so later changes propagate
+eventually rather than providing a synchronization point.
+
+** OxCaml / OCaml Compatibility
+
+Some source files have ~_ox~ and ~_stock~ variants. Dune selects one variant
+from ~%{ocaml-config:version}~ before compilation.
+
+The split exists in two places for two different reasons:
+
+- ~delator_ox.ml~ and ~delator_ox.mli~ expose OxCaml's ~local~ closure modes.
+  The stock parser does not understand that syntax.
+- ~delator_ppx_rewriter_ox.ml~ handles OxCaml's unified function AST. Stock
+  ppxlib exposes an older stable AST with different constructors.
+
+Keeping these variants separate is less clever than hiding them behind another
+source preprocessor and makes it clear which compatibility boundary is being
+tested. The generated module name remains ~Delator~ / ~delator.ppx~ in either
+build.
+
+** Cost Model
+
+A statically removed event is ~()~. A dynamically disabled event is
+one filter branch and zero allocation.
+
+An instrumented function which survives static elision still performs the
+dynamic check. OxCaml stack-allocates the generated closures. On stock OCaml,
+the release profile should be used if closure sinking matters.
+
+Values used only by a statically removed event may trigger unused-variable
+warnings. Putting those expressions directly in the event avoids introducing a
+binding which disappears from the compiled program.
+
+** Build
+
+#+BEGIN_SRC sh
+
+dune build
+dune test
+
+#+END_SRC
+
+The repository also contains an opam package and a nix flake. The flake checks
+the stock OCaml compatibility path; the sibling vērōcaml development shell
+checks the pinned OxCaml path.
+
+** Benchmarks
+
+The native microbenchmark harness reports median latency and allocated words
+per operation. Benchmarks must use the release profile when measuring inlining
+decisions.
+
+#+BEGIN_SRC sh
+
+dune build --profile release bench/hot_paths.exe bench/static_elision.exe
+_build/default/bench/static_elision.exe
+_build/default/bench/hot_paths.exe is_enabled
+_build/default/bench/hot_paths.exe ppx_disabled
+DELATOR_LOG='lowering=trace,info' \
+  _build/default/bench/hot_paths.exe is_enabled_directive
+_build/default/bench/hot_paths.exe instrument_disabled
+
+#+END_SRC
+
+~DELATOR_BENCH_ITERS~ overrides a benchmark's default iteration count.
+~tree_event~ exercises actual rendering and should be run with stderr redirected
+to ~/dev/null~. ~tree_exit~ additionally exercises worst-case signed ~int~ and
+~int64~ formatting.
+
+The pinned measurements and rejected optimization experiments are recorded in
+[[file:bench/RESULTS.org][bench/RESULTS.org]].
+
+** License
+
+delator is available under the MIT license.

@@ -1,0 +1,10 @@
+(test
+ (name filter_check)
+ (libraries delator)
+ (action
+  (setenv DELATOR_LOG "lowering=debug,lowering.special=trace,info"
+   (run %{test}))))
+
+(test
+ (name level_check)
+ (libraries delator))

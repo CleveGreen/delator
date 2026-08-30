@@ -1,0 +1,13 @@
+(rule
+ (target delator_ppx_rewriter_selected.ml)
+ (deps delator_ppx_rewriter_ox.ml delator_ppx_rewriter_stock.ml)
+ (action
+  (bash
+   "case '%{ocaml-config:version}' in *+ox*) cp delator_ppx_rewriter_ox.ml %{target} ;; *) cp delator_ppx_rewriter_stock.ml %{target} ;; esac")))
+
+(library
+ (name delator_ppx)
+ (public_name delator.ppx)
+ (kind ppx_rewriter)
+ (modules delator_ppx delator_ppx_rewriter_selected)
+ (libraries ppxlib))

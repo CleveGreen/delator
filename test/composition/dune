@@ -1,0 +1,11 @@
+(library
+ (name dummy_current_ast)
+ (kind ppx_rewriter)
+ (modules dummy_current_ast)
+ (libraries ppxlib))
+
+(test
+ (name composition)
+ (modules composition)
+ (libraries delator)
+ (preprocess (pps dummy_current_ast delator.ppx)))

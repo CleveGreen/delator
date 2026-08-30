@@ -1,0 +1,11 @@
+(executable
+ (name hot_paths)
+ (modules hot_paths)
+ (libraries delator unix)
+ (preprocess (pps delator.ppx -- --static-level=trace)))
+
+(executable
+ (name static_elision)
+ (modules static_elision)
+ (libraries delator unix)
+ (preprocess (pps delator.ppx -- --static-level=info)))

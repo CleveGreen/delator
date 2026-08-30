@@ -1,0 +1,1 @@
+let () = [%log.info "composed"]

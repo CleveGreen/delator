@@ -1,0 +1,48 @@
+(executable
+ (name info_elision)
+ (modules info_elision)
+ (libraries delator)
+ (preprocess (pps delator.ppx -- --static-level=info)))
+
+(executable
+ (name error_elision)
+ (modules error_elision)
+ (libraries delator)
+ (preprocess (pps delator.ppx -- --static-level=error)))
+
+(executable
+ (name env_elision)
+ (modules env_elision)
+ (libraries delator)
+ (preprocess
+  (pps delator.ppx -- --static-level=%{env:DELATOR_STATIC_LEVEL=trace})))
+
+(executable
+ (name dsource_driver)
+ (modules dsource_driver)
+ (libraries ppxlib delator.ppx)
+ (link_flags -linkall))
+
+(cram
+ (deps info_elision.exe error_elision.exe env_elision.exe))
+
+(rule
+ (alias runtest)
+ (deps dsource_elided.ml)
+ (action
+  (bash
+   "set -eu; %{bin:ocamlc} -stop-after typing -dsource -ppx './%{exe:dsource_driver.exe} --as-ppx' %{dep:dsource_elided.ml} > /dev/null 2> expanded-info || { cat expanded-info; exit 1; }; grep -F 'let () = ()' expanded-info > /dev/null || { cat expanded-info; exit 1; }; if grep -F missing expanded-info > /dev/null; then cat expanded-info; exit 1; fi")))
+
+(rule
+ (alias runtest)
+ (deps dsource_retained.ml)
+ (action
+  (bash
+   "set -eu; %{bin:ocamlc} -stop-after typing -dsource -ppx 'env DSOURCE_STATIC_LEVEL=trace ./%{exe:dsource_driver.exe} --as-ppx' %{dep:dsource_retained.ml} > /dev/null 2> expanded-trace || true; grep -F 'Delator.Runtime.event' expanded-trace > /dev/null; grep -F 'kept' expanded-trace > /dev/null")))
+
+(rule
+ (alias runtest)
+ (deps dsource_instrument.ml)
+ (action
+  (bash
+   "set -eu; %{bin:ocamlc} -stop-after typing -dsource -ppx 'env DSOURCE_STATIC_LEVEL=error ./%{exe:dsource_driver.exe} --as-ppx' %{dep:dsource_instrument.ml} > /dev/null 2> expanded-error; grep -F 'let untouched value = value + 1' expanded-error > /dev/null; if grep -F Delator.in_span expanded-error > /dev/null; then exit 1; fi")))

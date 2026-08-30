@@ -1,0 +1,8 @@
+(executables
+ (names lowering_demo multidomain_demo exception_demo instrument_features numeric_renderer)
+ (libraries delator)
+ (preprocess
+  (pps delator.ppx -- --static-level=%{env:DELATOR_STATIC_LEVEL=trace})))
+
+(cram
+ (deps lowering_demo.exe exception_demo.exe multidomain_demo.exe instrument_features.exe numeric_renderer.exe))

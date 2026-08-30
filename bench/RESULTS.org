@@ -1,0 +1,72 @@
+* Benchmark Results
+
+These results compare the implementation before and after the hot-path work in
+this repository. Both binaries were built with dune's ~release~ profile using
+OxCaml ~5.2.0+ox~ and ppxlib ~0.33.0+ox~. Runs were pinned with ~taskset -c 2~
+to the same 4.3 GHz-capable performance core on an Intel Core Ultra 5 125U.
+Each process result is the median of seven samples.
+
+| Workload                                      | Before ns/op | After ns/op | Change | Before words/op | After words/op |
+|-----------------------------------------------+--------------+-------------+--------+-----------------+----------------|
+| ~is_enabled~, no directives                   |        4.079 |       3.389 | -16.9% |               0 |              0 |
+| disabled PPX event                            |        4.192 |       3.654 | -12.8% |               0 |              0 |
+| enabled event, null renderer                  |        4.620 |       3.687 | -20.2% |               0 |              0 |
+| enabled PPX event with integer field          |       52.530 |      49.267 |  -6.2% |           7.969 |          7.969 |
+| disabled instrumented function                |        6.459 |       3.975 | -38.5% |           3.985 |              0 |
+| disabled direct span                          |        5.925 |       3.660 | -38.2% |           3.985 |              0 |
+| enabled instrumented function, null renderer  |       44.111 |      39.503 | -10.4% |          20.971 |         16.515 |
+| enabled direct span, null renderer             |       42.762 |      39.500 |  -7.6% |          20.971 |         16.515 |
+| one matching target directive                 |       10.887 |       9.517 | -12.6% |               0 |              0 |
+
+Worst-case signed ~int~ plus ~int64~ span-exit formatting was measured after
+introducing the incremental renderer. Replacing ~string_of_int~ /
+~Int64.to_string~ with C ~noalloc~ conversion into one domain-local 21-byte
+scratch area changed the path from 232.760 ns/op and 7.340 words/op to 159.684
+ns/op and zero words/op: a 31.4% latency reduction. The bound includes the sign
+and every digit of ~min_int~ and ~Int64.min_int~.
+
+An OCaml recursive-digit implementation was rejected before the C version.
+Boxed recursive ~int64~ division increased the same path to 52.429 words/op.
+The output chunk itself is not reserved per line. It begins at 4 KiB and keeps
+its amortized growth until flush; reserving each line would add work without
+avoiding a copy through ~Stdlib.Buffer~'s public API. The 21-byte numeric
+scratch is the allocation where a fixed bound is both available and useful.
+
+Direct incremental rendering removed ~Printf.sprintf~, intermediate field
+lists, breadcrumb strings, and complete-line concatenation from renderer hot
+paths. Renderer values below average two process medians run in alternating
+before / after order.
+
+| Renderer event | Before ns/op | After ns/op | Change | Before words/op | After words/op |
+|----------------+--------------+-------------+--------+-----------------+----------------|
+| tree           |      224.747 |      83.930 | -62.7% |          91.937 |          7.864 |
+| flat           |      186.633 |      80.067 | -57.1% |          89.481 |          7.864 |
+
+** Inlining Experiments
+
+Forcing ~[@@inline always]~ on the complete instrumented user function was
+tested. It did not improve the pinned benchmark and increased generated code,
+so the PPX does not add that attribute. The selected internal inline points are
+the small filter conversion / dispatch functions and ~in_span~, where
+cross-unit inlining lets the optimizer move the action closure into the enabled
+branch.
+
+Two other forced-inline candidates were rejected. Inlining the public
+~Runtime.is_enabled~ wrapper duplicated the complete target-directive matcher
+into every PPX call site, roughly 700 bytes in the inspected event. Calling one
+optimized runtime copy was faster for disabled events. Inlining the buffer
+acquisition / finalization helpers had no consistent renderer win and added
+about 8.7 KiB of text to the benchmark binary, so those calls remain
+out-of-line.
+
+** OxCaml Modes
+
+The OxCaml PPX emits ~stack_~ field / action closures and calls the ~local~-mode
+~in_span~ API with ~[@nontail]~. Release optimization had already sunk these
+closures in the measured optimized build, so this was neutral there. In the
+opaque development profile, disabled instrumentation remained at zero words/op
+instead of the original 3.985 words/op.
+
+These are microbenchmarks rather than end-to-end compiler throughput. They
+should be rerun on the target deployment machine before using the absolute
+latency values as a capacity estimate.

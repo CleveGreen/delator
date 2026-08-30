@@ -1,0 +1,22 @@
+(rule
+ (target delator.ml)
+ (deps delator_ox.ml delator_stock.ml)
+ (action
+  (bash
+   "case '%{ocaml-config:version}' in *+ox*) cp delator_ox.ml %{target} ;; *) cp delator_stock.ml %{target} ;; esac")))
+
+(rule
+ (target delator.mli)
+ (deps delator_ox.mli delator_stock.mli)
+ (action
+  (bash
+   "case '%{ocaml-config:version}' in *+ox*) cp delator_ox.mli %{target} ;; *) cp delator_stock.mli %{target} ;; esac")))
+
+(library
+ (name delator)
+ (public_name delator)
+ (modules (:standard \ delator_ox delator_stock))
+ (libraries unix)
+ (foreign_stubs
+  (language c)
+  (names decimal_stubs)))
