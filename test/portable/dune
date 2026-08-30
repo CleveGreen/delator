@@ -1,0 +1,12 @@
+(rule
+ (target portable_check.ml)
+ (deps portable_check_ox.ml portable_check_stock.ml)
+ (action
+  (bash
+   "case '%{ocaml-config:version}' in *+ox*) cp portable_check_ox.ml %{target} ;; *) cp portable_check_stock.ml %{target} ;; esac")))
+
+(test
+ (name portable_check)
+ (modules portable_check)
+ (libraries delator)
+ (preprocess (pps delator.ppx -- --static-level=trace)))

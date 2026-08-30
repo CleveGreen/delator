@@ -153,6 +153,13 @@ permits a concurrent read to observe an older immediate value without tearing,
 so later level changes propagate eventually rather than providing a
 synchronization point. Do not change the clock source while spans are active.
 
+The OxCaml interface asserts the documented runtime contract with
+~Obj.magic_portable~, which is a ~%identity~ primitive and adds no runtime work
+to an event or span. This permits direct calls and PPX-generated logging from
+~portable~ worker closures. Configuration remains an initialize-before-spawn
+operation, and low-level span values remain owned by the domain that created
+them.
+
 Color can also be changed after initialization with
 ~Delator.Color.set_enabled~.
 
