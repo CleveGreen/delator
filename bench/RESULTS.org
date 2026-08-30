@@ -14,8 +14,8 @@ Each process result is the median of seven samples.
 | enabled PPX event with integer field          |       52.530 |       7.871 | -85.0% |           7.969 |          7.969 |
 | disabled instrumented function                |        6.459 |       3.975 | -38.5% |           3.985 |              0 |
 | disabled direct span                          |        5.925 |       3.660 | -38.2% |           3.985 |              0 |
-| enabled instrumented function, null renderer  |       44.111 |      39.503 | -10.4% |          20.971 |         16.515 |
-| enabled direct span, null renderer             |       42.762 |      39.500 |  -7.6% |          20.971 |         16.515 |
+| enabled instrumented function, null renderer  |       44.111 |      15.278 | -65.4% |          20.971 |          0.000 |
+| enabled direct span, null renderer             |       42.762 |      14.815 | -65.4% |          20.971 |          0.000 |
 | one matching target directive                 |       10.887 |       9.517 | -12.6% |               0 |              0 |
 
 Worst-case signed ~int~ plus ~int64~ span-exit formatting was isolated before
@@ -74,6 +74,11 @@ instead of the original 3.985 words/op.
 
 ** Span Timing
 
+The enabled null-renderer rows use ~Clock.disable~ so they measure span
+bookkeeping against a backend which requests no timing. Span IDs and nesting
+live in reusable per-domain arrays, initially sized for 16 nested spans and
+grown geometrically. Consequently those rows allocate nothing after warmup.
+
 The original implementation used ~Unix.gettimeofday~, which is a wall clock
 and can move backwards. Span timing now defaults to a small C
 ~CLOCK_MONOTONIC~ stub. On x86 systems which report an invariant timestamp
@@ -83,8 +88,8 @@ only once.
 
 | Workload                         | Monotonic ns/op | TSC ns/op | Change | Monotonic words/op | TSC words/op |
 |----------------------------------+-----------------+-----------+--------+--------------------+--------------|
-| one clock reading                |          15.735 |     8.957 | -43.1% |              2.988 |        5.977 |
-| enabled span, null renderer      |          67.994 |    59.937 | -11.9% |             23.986 |       23.986 |
+| one clock reading                |          16.547 |     9.600 | -42.0% |              2.936 |        5.924 |
+| enabled span, null renderer      |          43.169 |    26.847 | -37.8% |              8.913 |        8.913 |
 
 These values use the same pinned core and release profile as the other tables.
 The direct TSC ~now_ns~ operation allocates during tick-to-nanosecond
@@ -102,19 +107,19 @@ The comparison harness pins
 [[https://github.com/ocaml-tracing/ocaml-trace/commit/13b7b6669e22a04c1c5c85cf422880873dec7180][ocaml-trace commit ~13b7b66~]] and builds both libraries with OxCaml
 ~5.2.0+ox~ in dune's ~release~ profile. The run below used the same Intel Core
 Ultra 5 125U and was pinned to core 2. Each value is the median of nine samples;
-the benchmark rotates measurement order between samples. Enabled operations
-dispatch into no-op collectors so backend serialization and I/O do not distort
-the instrumentation cost. The harness cleans and rebuilds the pinned
-~ocaml-trace~ checkout for each invocation.
+the benchmark rotates measurement order between samples. Operations dispatch
+into collectors without serialization or I/O. The timed-span collector does
+only the explicitly described bookkeeping below. The harness cleans and
+rebuilds the pinned ~ocaml-trace~ checkout for each invocation.
 
 | Workload                    | Baseline ns/op | Delator ns/op | ocaml-trace ns/op | Delator vs trace | Delator words/op | ocaml-trace words/op |
 |-----------------------------+----------------+---------------+-------------------+------------------+------------------+----------------------|
-| disabled event              |          2.002 |         3.603 |             2.186 |     64.8% slower |            0.000 |                0.000 |
-| disabled event, integer data |          1.903 |         3.172 |             2.395 |     32.4% slower |            0.000 |                3.985 |
-| disabled span               |          1.810 |         3.289 |             2.762 |     19.1% slower |            0.000 |                3.985 |
-| enabled event               |          1.809 |         5.854 |             6.357 |      7.9% faster |            0.000 |                0.000 |
-| enabled event, integer data |          1.791 |         5.331 |             8.139 |     34.5% faster |            7.969 |               14.995 |
-| enabled span                |          1.786 |        37.987 |            11.991 |    216.8% slower |           16.515 |                3.670 |
+| disabled event              |          1.696 |         3.496 |             2.263 |     54.5% slower |            0.000 |                0.000 |
+| disabled event, integer data |          1.746 |         3.078 |             2.223 |     38.5% slower |            0.000 |                3.985 |
+| disabled span               |          1.720 |         3.079 |             2.263 |     36.1% slower |            0.000 |                3.985 |
+| enabled event               |          1.733 |         5.972 |             6.997 |     14.6% faster |            0.000 |                0.000 |
+| enabled event, integer data |          1.734 |         5.948 |             7.844 |     24.2% faster |            7.969 |               14.995 |
+| enabled span                |          1.914 |        45.208 |            44.420 |      1.8% slower |            8.913 |               16.515 |
 
 The integer-data benchmark found that ~Field.int~ still eagerly called
 ~string_of_int~, despite IDs and durations already using the C formatter.
@@ -126,11 +131,19 @@ through the renderer interface rather than merely another inline annotation.
 
 The disabled ~ocaml-trace~ data and span operations allocate their callback
 closures under this OxCaml build. Delator's PPX and local-mode span API keep
-those paths at zero allocation. Conversely, the enabled span row includes work
-that Delator owns in its core: a span ID, domain-local nesting, and timing.
-~ocaml-trace~ delegates timing and ambient parent tracking to its collector;
-the no-op comparison collector does neither. The span row therefore describes
-core instrumentation cost, not equivalent end-to-end trace output.
+those paths at zero allocation.
+
+The enabled span row is the library comparison. Its ocaml-trace collector uses
+the same monotonic clock, reserves IDs in per-domain blocks, and retains the
+start sample until exit. Delator is 1.8% slower in this run and allocates 8.913
+words instead of 16.515. Backend rendering and I/O remain excluded from both
+sides.
+
+The earlier 216.8% result compared Delator's IDs, nesting, and timing against
+an ocaml-trace collector which returned one immediate token and performed none
+of that work. That result has been removed from the comparison table. The
+harness retains it only as the explicitly named ~enabled_span_null~ diagnostic
+for investigating dispatch overhead; it is not used to rank the libraries.
 
 Static elision is not in the table because ~ocaml-trace~ has no corresponding
 compile-time removal. The baseline operation is retained in each process to

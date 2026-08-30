@@ -1,4 +1,4 @@
-type span = Span.t
+type span
 
 val initialize : unit -> unit
 val is_enabled : level:Level.t -> target:string -> bool

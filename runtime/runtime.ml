@@ -1,4 +1,10 @@
-type span = Span.t
+type span = {
+  core : Span.t;
+  target : string;
+  level : Level.t;
+  name : string;
+  fields : Field.t list;
+}
 
 let initialized = ref false
 let initialization_lock = Mutex.create ()
@@ -25,18 +31,22 @@ let[@inline always] event ~target ~level ~msg ~fields =
   Renderer.on_event ~span:(Span.current_id ()) ~target ~level ~msg ~fields
 
 let new_span ~target ~level ~name ~fields =
-  let span = Span.create ~name ~target ~level fields in
-  Renderer.on_new_span ~id:(Span.id span) ~parent:(Span.parent span) ~name
-    ~target ~level ~fields;
-  span
+  { core = Span.create (); target; level; name; fields }
 
 let enter span =
-  Span.enter span;
-  Renderer.on_enter ~id:(Span.id span)
+  Span.enter span.core;
+  match
+    Renderer.on_new_span ~id:(Span.id span.core) ~parent:(Span.parent span.core)
+      ~name:span.name ~target:span.target ~level:span.level ~fields:span.fields
+  with
+  | () -> ()
+  | exception error ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      ignore (Span.exit span.core : int64);
+      Printexc.raise_with_backtrace error backtrace
 
 let exit span =
-  let duration_ns = Span.exit span in
-  Renderer.on_exit ~id:(Span.id span) ~duration_ns;
-  if Span.depth () = 0 then Buffer.flush ()
+  let duration_ns = Span.exit span.core in
+  Renderer.on_exit ~id:(Span.id span.core) ~duration_ns
 
 let () = initialize ()

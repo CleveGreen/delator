@@ -8,7 +8,13 @@ let expect_invalid operation =
 
 module Null_renderer : Delator.Renderer.S = struct
   let on_new_span ~id:_ ~parent:_ ~name:_ ~target:_ ~level:_ ~fields:_ = ()
-  let on_enter ~id:_ = ()
+  let on_exit ~id:_ ~duration_ns:_ = ()
+  let on_event ~span:_ ~target:_ ~level:_ ~msg:_ ~fields:_ = ()
+end
+
+module Failing_renderer : Delator.Renderer.S = struct
+  let on_new_span ~id:_ ~parent:_ ~name:_ ~target:_ ~level:_ ~fields:_ =
+    failwith "renderer failed"
   let on_exit ~id:_ ~duration_ns:_ = ()
   let on_event ~span:_ ~target:_ ~level:_ ~msg:_ ~fields:_ = ()
 end
@@ -18,6 +24,25 @@ let new_span name =
 
 let () =
   Delator.Renderer.set_current (module Null_renderer);
+  Delator.Clock.set (fun () -> 0L);
+  let rec nested count =
+    if count > 0 then
+      Delator.in_span ~level:Info ~target:"safety" ~name:"nested"
+        (fun () -> nested (count - 1))
+  in
+  nested 40;
+  Delator.Renderer.set_current (module Failing_renderer);
+  (match
+     Delator.in_span ~level:Info ~target:"safety" ~name:"failure" (fun () -> ())
+   with
+  | () -> failwith "expected renderer failure"
+  | exception Failure message when message = "renderer failed" -> ()
+  | exception error -> raise error);
+  Delator.Renderer.set_current (module Null_renderer);
+  nested 1;
+  Delator.Clock.disable ();
+  assert (Delator.Clock.now_ns () = 0L);
+  nested 40;
   Delator.Clock.set (fun () -> 0L);
   let span = new_span "single-use" in
   Delator.Runtime.enter span;

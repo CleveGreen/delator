@@ -1,6 +1,11 @@
 module Trace = Trace_core
 
-type Trace.span += Null_span
+(* This benchmark state is created per domain and is never shared. OxCaml's
+   portable DLS cannot express that ownership, so the conservative alert does
+   not identify a race here. *)
+[@@@alert "-unsafe_multidomain"]
+
+type Trace.span += Null_span | Measured_span of int * int64
 
 type measurement = { ns_per_op : float; words_per_op : float }
 
@@ -79,7 +84,6 @@ let consume value = consumed := Sys.opaque_identity value
 
 module Null_renderer : Delator.Renderer.S = struct
   let on_new_span ~id:_ ~parent:_ ~name:_ ~target:_ ~level:_ ~fields:_ = ()
-  let on_enter ~id:_ = ()
   let on_exit ~id:_ ~duration_ns:_ = ()
   let on_event ~span:_ ~target:_ ~level:_ ~msg:_ ~fields:_ = ()
 end
@@ -90,6 +94,46 @@ let null_trace_collector =
       ~enter_span:(fun () ~__FUNCTION__:_ ~__FILE__:_ ~__LINE__:_ ~level:_
                         ~params:_ ~data:_ ~parent:_ _ -> Null_span)
       ~exit_span:(fun () _ -> ())
+      ~add_data_to_span:(fun () _ _ -> ())
+      ~message:(fun () ~level:_ ~params:_ ~data:_ ~span:_ _ -> ())
+      ~metric:(fun () ~level:_ ~params:_ ~data:_ _ _ -> ())
+      ()
+  in
+  Trace.Collector.C_some ((), callbacks)
+
+type trace_id_state = { mutable next_id : int; mutable id_limit : int }
+
+let trace_id_block_size = 4_096
+let next_trace_id_block = Atomic.make 1
+let trace_ids =
+  Domain.DLS.new_key (fun () -> { next_id = 0; id_limit = 0 })
+
+let fresh_trace_id () =
+  let state = Domain.DLS.get trace_ids in
+  if state.next_id = state.id_limit then begin
+    let first = Atomic.fetch_and_add next_trace_id_block trace_id_block_size in
+    state.next_id <- first;
+    state.id_limit <- first + trace_id_block_size
+  end;
+  let id = state.next_id in
+  state.next_id <- id + 1;
+  id
+
+let consumed_duration = ref 0L
+
+let measured_trace_collector =
+  let callbacks =
+    Trace.Collector.Callbacks.make
+      ~enter_span:(fun () ~__FUNCTION__:_ ~__FILE__:_ ~__LINE__:_ ~level:_
+                        ~params:_ ~data:_ ~parent:_ _ ->
+        Measured_span (fresh_trace_id (), Delator.Clock.now_ns ()))
+      ~exit_span:(fun () span ->
+        match span with
+        | Measured_span (_, started_at) ->
+            consumed_duration :=
+              Sys.opaque_identity
+                (Int64.sub (Delator.Clock.now_ns ()) started_at)
+        | _ -> assert false)
       ~add_data_to_span:(fun () _ _ -> ())
       ~message:(fun () ~level:_ ~params:_ ~data:_ ~span:_ _ -> ())
       ~metric:(fun () ~level:_ ~params:_ ~data:_ _ _ -> ())
@@ -126,17 +170,21 @@ let trace_span value () =
   Trace.with_span ~level:Debug1 ~__FILE__ ~__LINE__ "benchmark span"
     (fun _ -> consume value)
 
-let setup_enabled () =
+let setup_enabled ~timed =
   Delator.set_default_level Trace;
   Delator.Renderer.set_current (module Null_renderer);
-  Delator.Clock.set (fun () -> 0L);
+  if timed then Delator.Clock.use_monotonic () else Delator.Clock.disable ();
   Trace.set_current_level Trace;
-  Trace.setup_collector null_trace_collector
+  Trace.setup_collector
+    (if timed then measured_trace_collector else null_trace_collector)
 
 let run workload =
   let value = 41 in
   let enabled = String.starts_with ~prefix:"enabled_" workload in
-  if enabled then setup_enabled () else Delator.set_default_level Info;
+  (* The public span comparison includes the work a useful collector needs.
+     The null case is retained only as an explicitly named dispatch floor. *)
+  let timed = workload = "enabled_span" in
+  if enabled then setup_enabled ~timed else Delator.set_default_level Info;
   let iterations =
     iterations_from_env
       (match workload with
@@ -144,7 +192,7 @@ let run workload =
       | "disabled_span" -> 20_000_000
       | "enabled_event" -> 10_000_000
       | "enabled_event_field" -> 5_000_000
-      | "enabled_span" -> 2_000_000
+      | "enabled_span" | "enabled_span_null" -> 2_000_000
       | _ -> invalid_arg ("unknown workload: " ^ workload))
   in
   let compared_operations =
@@ -154,7 +202,7 @@ let run workload =
     | "disabled_event_field" | "enabled_event_field" ->
         [ "delator", delator_event_field value;
           "ocaml-trace", trace_event_field value ]
-    | "disabled_span" | "enabled_span" ->
+    | "disabled_span" | "enabled_span" | "enabled_span_null" ->
         [ "delator", delator_span value; "ocaml-trace", trace_span value ]
     | _ -> assert false
   in
@@ -165,7 +213,7 @@ let run workload =
 let () =
   if Array.length Sys.argv <> 2 then begin
     prerr_endline
-      "usage: compare_ocaml_trace.exe {disabled_event|disabled_event_field|disabled_span|enabled_event|enabled_event_field|enabled_span}";
+      "usage: compare_ocaml_trace.exe {disabled_event|disabled_event_field|disabled_span|enabled_event|enabled_event_field|enabled_span|enabled_span_null}";
     exit 2
   end;
   run Sys.argv.(1)

@@ -43,7 +43,6 @@ let consume_time value = consumed_time := Sys.opaque_identity value
 
 module Null_renderer : Delator.Renderer.S = struct
   let on_new_span ~id:_ ~parent:_ ~name:_ ~target:_ ~level:_ ~fields:_ = ()
-  let on_enter ~id:_ = ()
   let on_exit ~id:_ ~duration_ns:_ = ()
   let on_event ~span:_ ~target:_ ~level:_ ~msg:_ ~fields:_ = ()
 end
@@ -111,7 +110,7 @@ let run name =
   | "instrument_enabled_null" ->
       Delator.set_default_level Trace;
       Delator.Renderer.set_current (module Null_renderer);
-      Delator.Clock.set (fun () -> 0L);
+      Delator.Clock.disable ();
       report name (iterations_from_env 2_000_000) (instrumented_call 41)
   | "span_disabled" ->
       Delator.set_default_level Info;
@@ -119,7 +118,7 @@ let run name =
   | "span_enabled_null" ->
       Delator.set_default_level Trace;
       Delator.Renderer.set_current (module Null_renderer);
-      Delator.Clock.set (fun () -> 0L);
+      Delator.Clock.disable ();
       report name (iterations_from_env 2_000_000) (direct_span 41)
   | "clock_monotonic" ->
       Delator.Clock.use_monotonic ();

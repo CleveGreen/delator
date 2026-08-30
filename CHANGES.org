@@ -8,3 +8,5 @@ Initial public release.
 - OxCaml local-mode instrumentation with stock OCaml 5.2 through 5.4
   compatibility.
 - Monotonic span timing with an opt-in calibrated invariant-TSC clock.
+- Optional clock-free spans and reusable domain-local span stacks for a
+  zero-allocation enabled span path.

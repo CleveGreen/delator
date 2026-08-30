@@ -102,6 +102,13 @@ directly into this area rather than allocating temporary strings. Integer
 fields retain their numeric representation until the renderer reaches them;
 they do not call ~string_of_int~ on the event path.
 
+The ordinary ~in_span~ path keeps IDs and timestamps in reusable domain-local
+arrays. They begin with room for 16 nested spans and double only when a domain
+exceeds its previous maximum nesting depth. With timing disabled, an enabled
+span through a no-op renderer has no steady-state allocation. The low-level
+~Runtime.new_span~ API still allocates an abstract lifecycle object because
+that object may escape its lexical span.
+
 ** Events
 
 The event extensions are ~[%log.trace]~, ~[%log.debug]~, ~[%log.info]~,
@@ -132,10 +139,11 @@ a string field. Other values use an explicit converter:
   ~never~.
 - ~DELATOR_UNBUFFERED=1~ writes each complete line through immediately for
   crash diagnosis.
-- ~DELATOR_CLOCK=monotonic|tsc~ selects span timing. ~monotonic~ is the
+- ~DELATOR_CLOCK=monotonic|tsc|off~ selects span timing. ~monotonic~ is the
   portable default. ~tsc~ reads the processor timestamp counter after a
   one-time calibration and is accepted only when the CPU reports an invariant
-  TSC; it is intended for lower-overhead approximate durations in logs.
+  TSC; it is intended for lower-overhead approximate durations in logs. ~off~
+  writes zero durations and skips clock reads and timestamp storage.
 - ~DELATOR_STATIC_LEVEL~ controls PPX elision when it is passed through the
   dune stanza shown above.
 
@@ -221,10 +229,11 @@ _build/default/bench/hot_paths.exe span_enabled_tsc
 The cross-library harness pins ~ocaml-trace~ to commit
 ~13b7b6669e22a04c1c5c85cf422880873dec7180~, builds its ~trace.core~ package
 with the active compiler, and compares disabled and enabled events and spans.
-Enabled workloads use no-op collectors on both sides so the result measures
-instrumentation rather than unrelated output formats. The first run needs
-~git~ and network access; the checkout and installation remain under
-~_build/~.
+Most enabled workloads use no-op collectors on both sides. The primary
+enabled-span workload instead gives ocaml-trace the same ID and
+monotonic-timing work. No
+workload serializes output. The first run needs ~git~ and network access; the
+checkout and installation remain under ~_build/~.
 It runs ~dune clean~ in the pinned ~ocaml-trace~ checkout before every build so
 no result depends on a previously compiled competitor artifact.
 
@@ -240,12 +249,16 @@ nix develop ../verocaml --command \
 #+END_SRC
 
 Available workloads are ~disabled_event~, ~disabled_event_field~,
-~disabled_span~, ~enabled_event~, ~enabled_event_field~, and ~enabled_span~.
-Set ~DELATOR_BENCH_ITERS~ to override the iteration count. Delator's static
-elision has no ~ocaml-trace~ equivalent and remains in the separate
+~disabled_span~, ~enabled_event~, ~enabled_event_field~, ~enabled_span~, and
+~enabled_span_null~. The primary ~enabled_span~ comparison uses the same
+monotonic clock for Delator and an ocaml-trace collector which assigns IDs and
+records durations. ~enabled_span_null~ is only a dispatch-floor diagnostic: it
+disables Delator's clock and gives ocaml-trace a collector which returns one
+immediate token. It is not an equivalent-work library comparison. Set
+~DELATOR_BENCH_ITERS~ to override the iteration count. Delator's static elision
+has no ~ocaml-trace~ equivalent and remains in the separate
 ~static_elision.exe~ benchmark.
 
-~DELATOR_BENCH_ITERS~ overrides a benchmark's default iteration count.
 ~tree_event~ exercises actual rendering and should be run with stderr redirected
 to ~/dev/null~. ~tree_exit~ additionally exercises worst-case signed ~int~ and
 ~int64~ formatting.

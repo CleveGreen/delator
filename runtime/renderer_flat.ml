@@ -3,11 +3,10 @@
 [@@@alert "-unsafe_multidomain"]
 
 type state = {
-  names : (int, string) Hashtbl.t;
   mutable stack : (int * string) list;
 }
 
-let state = Domain.DLS.new_key (fun () -> { names = Hashtbl.create 16; stack = [] })
+let state = Domain.DLS.new_key (fun () -> { stack = [] })
 
 let add_breadcrumb output stack =
   let rec add = function
@@ -22,7 +21,6 @@ let add_breadcrumb output stack =
 
 let on_new_span ~id ~parent:_ ~name ~target ~level ~fields =
   let state = Domain.DLS.get state in
-  Hashtbl.replace state.names id name;
   let line = Buffer.line_buffer () in
   let output = Buffer.output line in
   let scratch = Buffer.decimal_scratch line in
@@ -32,15 +30,7 @@ let on_new_span ~id ~parent:_ ~name ~target ~level ~fields =
   Stdlib.Buffer.add_string output " span.new=";
   Stdlib.Buffer.add_string output name;
   Render_util.add_fields ~scratch output fields;
-  Buffer.finish_line line
-
-let on_enter ~id =
-  let state = Domain.DLS.get state in
-  let name =
-    match Hashtbl.find_opt state.names id with
-    | Some name -> name
-    | None -> Printf.sprintf "span#%d" id
-  in
+  Buffer.finish_line line;
   state.stack <- (id, name) :: state.stack
 
 let on_exit ~id ~duration_ns =
@@ -59,7 +49,7 @@ let on_exit ~id ~duration_ns =
   (match state.stack with
   | (current, _) :: rest when current = id -> state.stack <- rest
   | _ -> ());
-  Hashtbl.remove state.names id
+  if Span.depth () = 0 then Buffer.flush ()
 
 let on_event ~span:_ ~target ~level ~msg ~fields =
   let state = Domain.DLS.get state in

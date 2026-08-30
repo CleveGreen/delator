@@ -14,20 +14,35 @@ let init = Runtime.initialize
 
 let set_default_level = Filter.set_default
 
+let start_span ~target ~level ~name ~fields =
+  let context = Span.current_context () in
+  let parent = Span.current_id_in context in
+  let id = Span.start context in
+  Span.enter_started context id;
+  match Renderer.on_new_span ~id ~parent ~name ~target ~level ~fields with
+  | () -> id
+  | exception error ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      ignore (Span.finish id : int64);
+      Printexc.raise_with_backtrace error backtrace
+
+let exit_span id =
+  let duration_ns = Span.finish id in
+  Renderer.on_exit ~id ~duration_ns
+
 let[@inline always] in_span ~level ~target ~name
     ?(fields = fun () -> []) ?(log_exn = true) action =
   if not (Runtime.is_enabled ~level ~target) then action ()
   else
-    let span = Runtime.new_span ~target ~level ~name ~fields:(fields ()) in
-    Runtime.enter span;
+    let span = start_span ~target ~level ~name ~fields:(fields ()) in
     match action () with
-    | result -> Runtime.exit span; result
+    | result -> exit_span span; result
     | exception error ->
         let backtrace = Printexc.get_raw_backtrace () in
         if log_exn then
           Runtime.event ~target ~level:Error ~msg:"uncaught exception"
             ~fields:[ ("exception", Field.exn error) ];
-        Runtime.exit span;
+        exit_span span;
         Printexc.raise_with_backtrace error backtrace
 
 let () = init ()

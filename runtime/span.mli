@@ -1,13 +1,15 @@
 type t
+type context
 
-val create : name:string -> target:string -> level:Level.t -> Field.t list -> t
+val create : unit -> t
 val id : t -> int
 val parent : t -> int option
-val name : t -> string
-val target : t -> string
-val level : t -> Level.t
-val fields : t -> Field.t list
 val enter : t -> unit
 val exit : t -> int64
+val current_context : unit -> context
+val current_id_in : context -> int option
+val start : context -> int
+val enter_started : context -> int -> unit
+val finish : int -> int64
 val current_id : unit -> int option
 val depth : unit -> int

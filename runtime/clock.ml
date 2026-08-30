@@ -18,11 +18,16 @@ type tsc_source = {
   origin_ns : int64;
 }
 
-type source = Monotonic | Tsc of tsc_source | Custom of (unit -> int64)
+type source = Disabled | Monotonic | Tsc of tsc_source | Custom of (unit -> int64)
 
 type sample = int64
 
+let zero_sample = 0L
+
 let current = ref Monotonic
+
+let[@inline always] is_enabled () =
+  match !current with Disabled -> false | Monotonic | Tsc _ | Custom _ -> true
 
 let tsc_ticks_to_ns source ticks =
   Int64.add source.origin_ns
@@ -32,18 +37,21 @@ let tsc_ticks_to_ns source ticks =
 
 let now_ns () =
   match !current with
+  | Disabled -> zero
   | Monotonic -> monotonic_now_ns ()
   | Tsc source -> tsc_ticks_to_ns source (tsc_now ())
   | Custom clock -> clock ()
 
-let sample () =
+let[@inline always] sample () =
   match !current with
+  | Disabled -> zero_sample
   | Monotonic -> monotonic_now_ns ()
   | Tsc _ -> tsc_now ()
   | Custom clock -> clock ()
 
-let elapsed_ns started_at =
+let[@inline always] elapsed_ns started_at =
   match !current with
+  | Disabled -> zero
   | Monotonic -> Int64.sub (monotonic_now_ns ()) started_at
   | Tsc source ->
       Int64.of_float
@@ -52,6 +60,8 @@ let elapsed_ns started_at =
   | Custom clock -> Int64.sub (clock ()) started_at
 
 let set clock = current := Custom clock
+
+let disable () = current := Disabled
 
 let use_monotonic () = current := Monotonic
 
@@ -76,8 +86,9 @@ let configure_from_env () =
   | _ -> (
       match Sys.getenv_opt "DELATOR_CLOCK" with
       | None | Some "" | Some "monotonic" -> use_monotonic ()
+      | Some "off" -> disable ()
       | Some "tsc" -> use_tsc ()
       | Some value ->
           invalid_arg
             (Printf.sprintf
-               "DELATOR_CLOCK: expected monotonic or tsc, got %S" value))
+               "DELATOR_CLOCK: expected monotonic, tsc, or off, got %S" value))

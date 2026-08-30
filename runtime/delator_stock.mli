@@ -8,6 +8,7 @@ end
 module Clock : sig
   val now_ns : unit -> int64
   val set : (unit -> int64) -> unit
+  val disable : unit -> unit
   val use_monotonic : unit -> unit
   val use_tsc : unit -> unit
 end
