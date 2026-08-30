@@ -132,7 +132,8 @@ a string field. Other values use an explicit converter:
 - ~DELATOR_LOG=lowering=trace,info~ sets target-prefix directives and the
   default filter. The longest matching target prefix wins.
 - ~DELATOR_FORMAT=flat~ selects breadcrumb lines instead of the default span
-  tree.
+  tree. ~DELATOR_FORMAT=json~ (or ~ndjson~) selects newline-delimited JSON when
+  the optional ~yojson~ dependency was present while building Delator.
 - ~DELATOR_COLOR=auto|always|never~ colors level labels and span markers. The
   default is ~auto~, which colors only a terminal, honors ~NO_COLOR~, and
   disables color for ~TERM=dumb~. ~1~ and ~0~ are aliases for ~always~ and
@@ -162,6 +163,28 @@ them.
 
 Color can also be changed after initialization with
 ~Delator.Color.set_enabled~.
+
+*** NDJSON
+
+Install Delator together with Yojson to enable the machine-readable renderer:
+
+#+BEGIN_SRC sh
+
+opam install delator yojson
+DELATOR_FORMAT=json your-program
+
+#+END_SRC
+
+Opam records Yojson as an optional dependency, so installing or removing it
+rebuilds Delator with the corresponding renderer selection. Without Yojson,
+the tree and flat renderers have no JSON dependency; selecting ~json~ reports
+that Delator must be rebuilt with Yojson.
+
+The NDJSON stream contains one object per event, span start, or span end. Every
+object has ~kind~, ~target~, ~span_id~, ~parent_span_id~, ~level~, ~message~,
+and ~fields~ members. Span ends additionally contain ~duration_ns~. Missing
+context is JSON ~null~, strings are escaped by Yojson, and integer and boolean
+fields remain JSON numbers and booleans.
 
 ** OxCaml / OCaml Compatibility
 

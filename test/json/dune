@@ -1,0 +1,13 @@
+(test
+ (name json_availability_check)
+ (libraries delator unix))
+
+(test
+ (name json_renderer_check)
+ (modules json_renderer_check json_test_support)
+ (libraries
+  delator
+  unix
+  (select json_test_support.ml from
+   (yojson -> json_test_support_yojson.ml)
+   (-> json_test_support_unavailable.ml))))

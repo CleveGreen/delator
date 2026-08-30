@@ -2,6 +2,7 @@ module type S = Renderer_intf.S
 
 let tree = (module Renderer_tree : S)
 let flat = (module Renderer_flat : S)
+let json = Renderer_json.renderer
 
 type callbacks = {
   on_new_span :
@@ -27,7 +28,16 @@ let configure_from_env () =
   match Sys.getenv_opt "DELATOR_FORMAT" with
   | None | Some "" | Some "tree" -> set_current tree
   | Some "flat" -> set_current flat
-  | Some value -> invalid_arg (Printf.sprintf "DELATOR_FORMAT: unknown format %S" value)
+  | Some ("json" | "ndjson") -> (
+      match json with
+      | Some renderer -> set_current renderer
+      | None ->
+          invalid_arg
+            "DELATOR_FORMAT=json requires the optional yojson dependency; install yojson and rebuild delator")
+  | Some value ->
+      invalid_arg
+        (Printf.sprintf
+           "DELATOR_FORMAT: expected tree, flat, or json, got %S" value)
 
 let on_new_span ~id ~parent ~name ~target ~level ~fields =
   (!current).on_new_span ~id ~parent ~name ~target ~level ~fields

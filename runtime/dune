@@ -15,8 +15,17 @@
 (library
  (name delator)
  (public_name delator)
- (modules (:standard \ delator_ox delator_stock))
- (libraries unix)
+ (modules
+  (:standard
+   \ delator_ox
+   delator_stock
+   renderer_json_yojson
+   renderer_json_unavailable))
+ (libraries
+  unix
+  (select renderer_json.ml from
+   (yojson -> renderer_json_yojson.ml)
+   (-> renderer_json_unavailable.ml)))
  (foreign_stubs
   (language c)
   (names decimal_stubs)))

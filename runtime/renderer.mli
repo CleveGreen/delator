@@ -2,6 +2,7 @@ module type S = Renderer_intf.S
 
 val tree : (module S)
 val flat : (module S)
+val json : (module S) option
 val set_current : (module S) -> unit
 val configure_from_env : unit -> unit
 val on_new_span :

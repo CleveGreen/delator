@@ -11,6 +11,11 @@ let int value = Int value
 let bool value = Bool value
 let exn value = String (Printexc.to_string value)
 
+let fold ~string ~int ~bool = function
+  | String value -> string value
+  | Int value -> int value
+  | Bool value -> bool value
+
 let render = function
   | String value -> value
   | Int value -> string_of_int value
