@@ -73,11 +73,28 @@ let strip_attributes attributes =
 class strip_pattern_attributes = object
   inherit Ast_traverse.map as super
   method! pattern pattern =
+    ignore (Attribute.get field_attr pattern : expression option);
+    ignore (Attribute.get field_pp_attr pattern : expression option);
+    ignore (Attribute.has_flag skip_attr pattern : bool);
     let pattern = super#pattern pattern in
     { pattern with ppat_attributes = strip_attributes pattern.ppat_attributes }
 end
 
 let strip_pattern = (new strip_pattern_attributes)#pattern
+
+let rec strip_function_parameter_attributes expression =
+  match expression.pexp_desc with
+  | Pexp_fun (label, default, pattern, body) ->
+      { expression with
+        pexp_desc =
+          Pexp_fun
+            (label, default, strip_pattern pattern,
+             strip_function_parameter_attributes body) }
+  | Pexp_newtype (type_name, body) ->
+      { expression with
+        pexp_desc =
+          Pexp_newtype (type_name, strip_function_parameter_attributes body) }
+  | _ -> expression
 
 let longident ~loc name =
   let txt =
@@ -294,7 +311,8 @@ class mapper = object
     else
       let level = Option.value ~default:Debug configured_level in
       if not (survives level) then
-        { binding with pvb_expr = binding.pvb_expr }
+        { binding with
+          pvb_expr = strip_function_parameter_attributes binding.pvb_expr }
       else
         match binding_name binding with
         | None ->

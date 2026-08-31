@@ -45,4 +45,4 @@
  (deps dsource_instrument.ml)
  (action
   (bash
-   "set -eu; %{bin:ocamlc} -stop-after typing -dsource -ppx 'env DSOURCE_STATIC_LEVEL=error ./%{exe:dsource_driver.exe} --as-ppx' %{dep:dsource_instrument.ml} > /dev/null 2> expanded-error; grep -F 'let untouched value = value + 1' expanded-error > /dev/null; if grep -F Delator.in_span expanded-error > /dev/null; then exit 1; fi")))
+   "set -eu; %{bin:ocamlc} -stop-after typing -dsource -ppx 'env DSOURCE_STATIC_LEVEL=error ./%{exe:dsource_driver.exe} --as-ppx' %{dep:dsource_instrument.ml} > /dev/null 2> expanded-error; grep -F 'let untouched value = value + 1' expanded-error > /dev/null; grep -F 'let untouched_field value = value + 1' expanded-error > /dev/null; grep -F 'let untouched_field_pp value = value + 1' expanded-error > /dev/null; grep -F 'let untouched_skip value = value + 1' expanded-error > /dev/null; if grep -F Delator.in_span expanded-error > /dev/null || grep -F delator.field expanded-error > /dev/null || grep -F delator.skip expanded-error > /dev/null; then cat expanded-error; exit 1; fi")))
