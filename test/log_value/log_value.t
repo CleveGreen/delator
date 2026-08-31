@@ -12,7 +12,7 @@
 Level flow is checked before static erasure, so every profile rejects the same
 invalid source.
 
-  $ rejects () { level=$1; file=$2; message=$3; if DELATOR_TEST_STATIC_LEVEL="$level" ocamlc -stop-after typing -ppx "./log_value_driver.exe --as-ppx" "$file" >"$file.out" 2>&1; then cat "$file.out"; return 1; fi; line=$(grep -F "$message" "$file.out") || { cat "$file.out"; return 1; }; echo "$line" | sed 's/^.*Error: //'; }
+  $ rejects () { level=$1; file=$2; message=$3; if DELATOR_TEST_STATIC_LEVEL="$level" ocamlc -stop-after typing -ppx "./log_value_driver.exe --as-ppx" "$file" >"$file.out" 2>&1; then cat "$file.out"; return 1; fi; grep -F "$message" "$file.out" >/dev/null || { cat "$file.out"; return 1; }; printf '%s\n' "$message"; }
   $ rejects trace flow_trace_in_debug.ml 'Trace log-value used in a Debug context'
   Trace log-value used in a Debug context
   $ rejects error flow_trace_in_debug.ml 'Trace log-value used in a Debug context'
@@ -32,4 +32,4 @@ invalid source.
   $ rejects trace missing_field_annotation.ml 'field metadata requires a compatible [@log_value.LEVEL] use annotation'
   field metadata requires a compatible [@log_value.LEVEL] use annotation
   $ rejects trace instrumentation_capture.ml 'Trace log-value parameter would be captured by Debug instrumentation'
-  Trace log-value parameter would be captured by Debug instrumentation;
+  Trace log-value parameter would be captured by Debug instrumentation
