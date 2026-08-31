@@ -13,9 +13,25 @@
    %{lib:ppxlib:META}
    %{target})))
 
+(rule
+ (target delator_log_value_selected.ml)
+ (deps
+  delator_log_value_ox.ml
+  delator_log_value_stock.ml
+  delator_log_value_unified_stock.ml
+  select-rewriter
+  %{lib:ppxlib:META})
+ (action
+  (run
+   ./select-rewriter
+   %{ocaml-config:version}
+   %{lib:ppxlib:META}
+   %{target}
+   delator_log_value)))
+
 (library
  (name delator_ppx)
  (public_name delator.ppx)
  (kind ppx_rewriter)
- (modules delator_ppx delator_ppx_rewriter_selected)
+ (modules delator_ppx delator_ppx_rewriter_selected delator_log_value_selected)
  (libraries ppxlib))

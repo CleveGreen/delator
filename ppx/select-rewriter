@@ -4,10 +4,11 @@ set -eu
 compiler_version=$1
 ppxlib_meta=$2
 target=$3
+stem=${4:-delator_ppx_rewriter}
 
 case "$compiler_version" in
   *+ox*)
-    cp delator_ppx_rewriter_ox.ml "$target"
+    cp "${stem}_ox.ml" "$target"
     ;;
   *)
     version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ppxlib_meta" | head -1)
@@ -20,9 +21,9 @@ case "$compiler_version" in
         ;;
     esac
     if test "$major" -ge 1 || test "$minor" -ge 36; then
-      cp delator_ppx_rewriter_unified_stock.ml "$target"
+      cp "${stem}_unified_stock.ml" "$target"
     else
-      cp delator_ppx_rewriter_stock.ml "$target"
+      cp "${stem}_stock.ml" "$target"
     fi
     ;;
 esac

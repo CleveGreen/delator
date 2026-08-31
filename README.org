@@ -49,6 +49,67 @@ key:
 
 #+END_SRC
 
+*** Level-Gated Values
+
+Code which exists only to feed a particular log level can carry that level as
+well. The PPX removes the value, its initializer, and every matching structural
+slot when the level is disabled.
+
+#+BEGIN_SRC ocaml
+
+type request = {
+  path : string;
+  trace_context : context [@log_value.trace];
+}
+
+let handle
+    (trace_context : context [@log_value.trace])
+    path =
+  let[@log_value.trace] detail =
+    inspect (trace_context [@log_value.trace])
+  in
+  let request =
+    {
+      path;
+      trace_context = (trace_context [@log_value.trace]);
+    }
+  in
+  [%log.trace "request"
+    ~detail:(context_field (detail [@log_value.trace]))];
+  dispatch
+    (request.trace_context [@log_value.trace])
+    request.path
+
+#+END_SRC
+
+Use ~[@log_value.LEVEL]~, where ~LEVEL~ is ~trace~, ~debug~, ~info~, ~warn~,
+or ~error~. The attribute may mark:
+
+- a local or top-level nonrecursive binding;
+- a function formal and its actual argument;
+- a record field, construction field, projection, pattern field, or mutable
+  field update value;
+- a positional variant component, construction component, or pattern
+  component; and
+- an interface formal, field, component, or whole value declaration.
+
+Levels form the availability lattice
+~Trace < Debug < Info < Warn < Error~. A value declared at ~L~ may be used in a
+context ~C~ iff ~C <= L~. Thus Info admits Info, Debug, and Trace uses, while
+Trace admits only Trace. Declarations and uses are annotated explicitly;
+structural slots such as formals and fields require exact levels so their
+erasure remains coherent.
+
+Checking precedes erasure. Instrumentation is a use at its configured level;
+~[@delator.skip]~ and ~[@@delator.skip_all]~ remove those uses.
+
+Because erasure changes function arity and aggregate layout, the static level
+is part of the compilation-unit ABI. Compile every unit sharing such an
+interface at the same level, passed through dune's ~pps~ arguments.
+
+Recursive or grouped gated bindings are unsupported. A record must retain at
+least one field in the selected profile.
+
 *** Low Boilerplate
 
 Events are small expressions and functions may be instrumented with an
@@ -202,6 +263,8 @@ The split exists in two places for two different reasons:
 - ~delator_ppx_rewriter_unified_stock.ml~ handles ppxlib 0.36 and newer, whose
   function AST is unified but which does not contain OxCaml's mode
   constructors.
+- The corresponding ~delator_log_value_*~ files isolate the same three AST
+  boundaries for structural value erasure and level-flow checking.
 
 Keeping these variants separate is less clever than hiding them behind another
 source preprocessor and makes it clear which compatibility boundary is being
@@ -217,9 +280,10 @@ An instrumented function which survives static elision still performs the
 dynamic check. OxCaml stack-allocates the generated closures. On stock OCaml,
 the release profile should be used if closure sinking matters.
 
-Values used only by a statically removed event may trigger unused-variable
-warnings. Putting those expressions directly in the event avoids introducing a
-binding which disappears from the compiled program.
+Values used only for logging can use ~[@log_value.LEVEL]~ when their allocation,
+initialization, aggregate slot, or function argument should disappear with that
+level. Ordinary values placed directly in a removed event already disappear
+without an additional annotation.
 
 ** Build
 

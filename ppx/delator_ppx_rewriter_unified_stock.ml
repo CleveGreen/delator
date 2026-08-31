@@ -348,4 +348,12 @@ class mapper = object
                   binding.pvb_expr }
 end
 
-let impl structure = (new mapper)#structure structure
+let impl structure =
+  structure
+  |> Delator_log_value_selected.rewrite
+       ~static_level:(level_to_int !static_level)
+  |> (new mapper)#structure
+
+let intf signature =
+  Delator_log_value_selected.rewrite_signature
+    ~static_level:(level_to_int !static_level) signature

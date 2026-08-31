@@ -1,0 +1,59 @@
+(executable
+ (name retained)
+ (modules retained)
+ (libraries delator)
+ (preprocess (pps delator.ppx -- --static-level=trace)))
+
+(executable
+ (name debug_profile)
+ (modules debug_profile)
+ (libraries delator)
+ (preprocess (pps delator.ppx -- --static-level=debug)))
+
+(executable
+ (name elided)
+ (modules elided)
+ (libraries delator)
+ (preprocess (pps delator.ppx -- --static-level=info)))
+
+(executable
+ (name subtyping)
+ (modules subtyping)
+ (libraries delator)
+ (preprocess (pps delator.ppx -- --static-level=trace)))
+
+(library
+ (name log_value_interface)
+ (wrapped false)
+ (modules log_value_interface)
+ (preprocess (pps delator.ppx -- --static-level=info)))
+
+(executable
+ (name interface_client)
+ (modules interface_client)
+ (libraries log_value_interface)
+ (preprocess (pps delator.ppx -- --static-level=info)))
+
+(executable
+ (name log_value_driver)
+ (modules log_value_driver)
+ (libraries ppxlib delator.ppx)
+ (link_flags -linkall))
+
+(cram
+ (deps
+  retained.exe
+  debug_profile.exe
+  elided.exe
+  subtyping.exe
+  interface_client.exe
+  log_value_driver.exe
+  flow_trace_in_debug.ml
+  flow_debug_in_info.ml
+  bare_use.ml
+  relabel_use.ml
+  formal_mismatch.ml
+  missing_actual_annotation.ml
+  field_mismatch.ml
+  missing_field_annotation.ml
+  instrumentation_capture.ml))

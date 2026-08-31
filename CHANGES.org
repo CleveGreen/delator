@@ -5,6 +5,8 @@ Initial public release.
 - Structured events, nested spans, target-prefix filtering, tree and flat text
   renderers, terminal color, and domain-local 64 KiB chunk buffering.
 - PPX event syntax, function instrumentation, and compile-time level elision.
+- Level-gated bindings, arguments, fields, variant components, interfaces, and
+  uses with structural erasure and static level-flow checking.
 - OxCaml local-mode instrumentation with stock OCaml 5.2 through 5.4
   compatibility.
 - Zero-cost OxCaml portability assertions for logging from portable workers.
