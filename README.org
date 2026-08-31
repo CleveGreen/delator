@@ -107,8 +107,9 @@ Because erasure changes function arity and aggregate layout, the static level
 is part of the compilation-unit ABI. Compile every unit sharing such an
 interface at the same level, passed through dune's ~pps~ arguments.
 
-Recursive or grouped gated bindings are unsupported. A record must retain at
-least one field in the selected profile.
+Recursive or grouped gated bindings are unsupported. Functions and records
+must retain at least one ordinary formal or field, so erasure never collapses
+the entire callable or record shape.
 
 *** Low Boilerplate
 
