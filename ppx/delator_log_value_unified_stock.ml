@@ -131,6 +131,21 @@ let names_with_level level pattern =
   iterator#pattern pattern;
   !names
 
+let pattern_names pattern =
+  let names = ref [] in
+  let iterator =
+    object
+      inherit Ast_traverse.iter as super
+      method! pattern pattern =
+        (match pattern.ppat_desc with
+        | Ppat_var name -> names := name.txt :: !names
+        | _ -> ());
+        super#pattern pattern
+    end
+  in
+  iterator#pattern pattern;
+  !names
+
 let longident_name = function
   | Longident.Lident name -> Some name
   | Ldot _ | Lapply _ -> None
@@ -231,6 +246,19 @@ let function_signature expression =
            parameters)
   | _ -> None
 
+let reject_fully_gated_callable ~loc = function
+  | Some (_ :: _ as formals)
+    when List.for_all (fun (_, level) -> Option.is_some level) formals ->
+      Location.raise_errorf ~loc
+        "a level-gated function must retain at least one ordinary formal"
+  | Some _ | None -> ()
+
+let rec signature_formal_levels typ =
+  match typ.ptyp_desc with
+  | Ptyp_arrow (_, argument, result) ->
+      level_on_type argument :: signature_formal_levels result
+  | _ -> []
+
 let with_ref reference value action =
   let saved = !reference in
   reference := value;
@@ -248,11 +276,21 @@ class validator =
 
     method private with_context level action = with_ref context (Some level) action
 
-    method private with_bindings additions action =
-      with_ref bindings (additions @ !bindings) action
+    method private with_bindings ~shadowed additions action =
+      let outer =
+        List.filter
+          (fun (name, _) -> not (List.mem name shadowed))
+          !bindings
+      in
+      with_ref bindings (additions @ outer) action
 
-    method private with_callables additions action =
-      with_ref callables (additions @ !callables) action
+    method private with_callables ~shadowed additions action =
+      let outer =
+        List.filter
+          (fun (name, _) -> not (List.mem name shadowed))
+          !callables
+      in
+      with_ref callables (additions @ outer) action
 
     method private field_level label =
       let name = final_longident_name label in
@@ -410,17 +448,33 @@ class validator =
                   | _ -> [])
               | _ -> []
             in
-            bindings := additions @ !bindings;
-            (match item.pstr_desc with
-            | Pstr_value (Nonrecursive, bindings_here) ->
-                List.iter
-                  (fun binding ->
-                    match (variable_name binding.pvb_pat, function_signature binding.pvb_expr) with
-                    | Some name, Some signature ->
-                        callables := (name, signature) :: !callables
-                    | _ -> ())
-                  bindings_here
-            | _ -> ());
+            let shadowed, callable_additions =
+              match item.pstr_desc with
+              | Pstr_value (Nonrecursive, bindings_here) ->
+                  ( List.concat_map
+                      (fun binding -> pattern_names binding.pvb_pat)
+                      bindings_here,
+                    List.filter_map
+                      (fun binding ->
+                        match
+                          ( variable_name binding.pvb_pat,
+                            function_signature binding.pvb_expr )
+                        with
+                        | Some name, Some signature -> Some (name, signature)
+                        | _ -> None)
+                      bindings_here )
+              | _ -> ([], [])
+            in
+            bindings :=
+              additions
+              @ List.filter
+                  (fun (name, _) -> not (List.mem name shadowed))
+                  !bindings;
+            callables :=
+              callable_additions
+              @ List.filter
+                  (fun (name, _) -> not (List.mem name shadowed))
+                  !callables;
             (match item.pstr_desc with
             | Pstr_type (_, declarations) ->
                 List.iter
@@ -441,6 +495,8 @@ class validator =
 
     method! value_binding binding =
       validate_instrumentation_formals binding;
+      reject_fully_gated_callable ~loc:binding.pvb_loc
+        (function_signature binding.pvb_expr);
       match level_on_binding binding with
       | None -> super#value_binding binding
       | Some level ->
@@ -495,8 +551,13 @@ class validator =
                 | _ -> None)
               bindings_here
           in
-          self#with_bindings additions (fun () ->
-              self#with_callables callable_additions (fun () ->
+          let shadowed =
+            List.concat_map
+              (fun binding -> pattern_names binding.pvb_pat)
+              bindings_here
+          in
+          self#with_bindings ~shadowed additions (fun () ->
+              self#with_callables ~shadowed callable_additions (fun () ->
                   self#expression body))
       | Pexp_function (parameters, constraint_, body) ->
           let additions =
@@ -523,12 +584,21 @@ class validator =
                   Option.iter self#core_type source;
                   self#core_type target)
             constraint_;
-          self#with_bindings additions (fun () ->
-              match body with
-              | Pfunction_body body -> self#expression body
-              | Pfunction_cases (cases, _, attributes) ->
-                  self#attributes attributes;
-                  List.iter self#case cases)
+          let shadowed =
+            List.concat_map
+              (fun parameter ->
+                match parameter.pparam_desc with
+                | Pparam_newtype _ -> []
+                | Pparam_val (_, _, pattern) -> pattern_names pattern)
+              parameters
+          in
+          self#with_bindings ~shadowed additions (fun () ->
+              self#with_callables ~shadowed [] (fun () ->
+                  match body with
+                  | Pfunction_body body -> self#expression body
+                  | Pfunction_cases (cases, _, attributes) ->
+                      self#attributes attributes;
+                      List.iter self#case cases))
       | Pexp_apply (callee, arguments) when !structural_components ->
           self#validate_call callee arguments;
           self#expression callee;
@@ -572,9 +642,11 @@ class validator =
     method! case case =
       self#pattern case.pc_lhs;
       let additions = self#pattern_bindings case.pc_lhs in
-      self#with_bindings additions (fun () ->
-          Option.iter self#expression case.pc_guard;
-          self#expression case.pc_rhs)
+      let shadowed = pattern_names case.pc_lhs in
+      self#with_bindings ~shadowed additions (fun () ->
+          self#with_callables ~shadowed [] (fun () ->
+              Option.iter self#expression case.pc_guard;
+              self#expression case.pc_rhs))
   end
 
 class rewriter ~static_level =
@@ -630,6 +702,10 @@ class rewriter ~static_level =
       super#value_binding { binding with pvb_attributes = attributes }
 
     method! value_description value =
+      let formals = signature_formal_levels value.pval_type in
+      if formals <> [] && List.for_all Option.is_some formals then
+        Location.raise_errorf ~loc:value.pval_loc
+          "a level-gated function must retain at least one ordinary formal";
       let _, attributes = split_level_attributes value.pval_attributes in
       super#value_description { value with pval_attributes = attributes }
 

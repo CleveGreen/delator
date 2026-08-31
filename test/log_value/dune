@@ -22,6 +22,94 @@
  (libraries delator)
  (preprocess (pps delator.ppx -- --static-level=trace)))
 
+(rule
+ (targets
+  semantic_trace.ml
+  application_trace.ml
+  aggregate_trace.ml
+  complete_component_trace.ml)
+ (deps
+  semantic_preservation.ml
+  application_semantics.ml
+  aggregate_semantics.ml
+  complete_component_semantics.ml)
+ (action
+  (progn
+   (copy %{dep:semantic_preservation.ml} semantic_trace.ml)
+   (copy %{dep:application_semantics.ml} application_trace.ml)
+   (copy %{dep:aggregate_semantics.ml} aggregate_trace.ml)
+   (copy %{dep:complete_component_semantics.ml} complete_component_trace.ml))))
+
+(executables
+ (names
+  semantic_trace
+  application_trace
+  aggregate_trace
+  complete_component_trace)
+ (modules
+  semantic_trace
+  application_trace
+  aggregate_trace
+  complete_component_trace)
+ (libraries delator)
+ (preprocess (pps delator.ppx -- --static-level=trace)))
+
+(rule
+ (targets
+  semantic_debug.ml
+  application_debug.ml
+  aggregate_debug.ml
+  complete_component_debug.ml)
+ (deps
+  semantic_preservation.ml
+  application_semantics.ml
+  aggregate_semantics.ml
+  complete_component_semantics.ml)
+ (action
+  (progn
+   (copy %{dep:semantic_preservation.ml} semantic_debug.ml)
+   (copy %{dep:application_semantics.ml} application_debug.ml)
+   (copy %{dep:aggregate_semantics.ml} aggregate_debug.ml)
+   (copy %{dep:complete_component_semantics.ml} complete_component_debug.ml))))
+
+(executables
+ (names
+  semantic_debug
+  application_debug
+  aggregate_debug
+  complete_component_debug)
+ (modules
+  semantic_debug
+  application_debug
+  aggregate_debug
+  complete_component_debug)
+ (libraries delator)
+ (preprocess (pps delator.ppx -- --static-level=debug)))
+
+(rule
+ (targets
+  semantic_info.ml
+  application_info.ml
+  aggregate_info.ml
+  complete_component_info.ml)
+ (deps
+  semantic_preservation.ml
+  application_semantics.ml
+  aggregate_semantics.ml
+  complete_component_semantics.ml)
+ (action
+  (progn
+   (copy %{dep:semantic_preservation.ml} semantic_info.ml)
+   (copy %{dep:application_semantics.ml} application_info.ml)
+   (copy %{dep:aggregate_semantics.ml} aggregate_info.ml)
+   (copy %{dep:complete_component_semantics.ml} complete_component_info.ml))))
+
+(executables
+ (names semantic_info application_info aggregate_info complete_component_info)
+ (modules semantic_info application_info aggregate_info complete_component_info)
+ (libraries delator)
+ (preprocess (pps delator.ppx -- --static-level=info)))
+
 (library
  (name log_value_interface)
  (wrapped false)
@@ -40,14 +128,32 @@
  (libraries ppxlib delator.ppx)
  (link_flags -linkall))
 
+(executable
+ (name matrix_checks)
+ (modules matrix_checks)
+ (libraries unix))
+
 (cram
  (deps
   retained.exe
   debug_profile.exe
   elided.exe
   subtyping.exe
+  semantic_trace.exe
+  semantic_debug.exe
+  semantic_info.exe
+  application_trace.exe
+  application_debug.exe
+  application_info.exe
+  aggregate_trace.exe
+  aggregate_debug.exe
+  aggregate_info.exe
+  complete_component_trace.exe
+  complete_component_debug.exe
+  complete_component_info.exe
   interface_client.exe
   log_value_driver.exe
+  matrix_checks.exe
   flow_trace_in_debug.ml
   flow_debug_in_info.ml
   bare_use.ml
@@ -56,4 +162,9 @@
   missing_actual_annotation.ml
   field_mismatch.ml
   missing_field_annotation.ml
+  fully_gated_function.ml
+  fully_gated_signature.mli
+  recursive_binding.ml
+  grouped_binding.ml
+  fully_gated_record.ml
   instrumentation_capture.ml))
