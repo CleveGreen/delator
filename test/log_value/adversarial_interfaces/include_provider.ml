@@ -1,0 +1,1 @@
+let classify value = value

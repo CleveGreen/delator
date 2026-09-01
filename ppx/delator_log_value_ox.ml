@@ -237,15 +237,20 @@ let validate_instrumentation_formals binding =
 
 let function_signature expression =
   match expression.pexp_desc with
-  | Pexp_function (parameters, _, _) ->
+  | Pexp_function (parameters, _, body) ->
+      let formals =
+        List.filter_map
+          (fun parameter ->
+            match parameter.pparam_desc with
+            | Pparam_newtype _ -> None
+            | Pparam_val (label, _, pattern) ->
+                Some (label, formal_level pattern))
+          parameters
+      in
       Some
-        (List.filter_map
-           (fun parameter ->
-             match parameter.pparam_desc with
-             | Pparam_newtype _ -> None
-             | Pparam_val (label, _, pattern) ->
-                 Some (label, formal_level pattern))
-           parameters)
+        (match body with
+        | Pfunction_cases _ -> formals @ [ (Nolabel, None) ]
+        | Pfunction_body _ -> formals)
   | _ -> None
 
 let reject_fully_gated_callable ~loc = function
@@ -388,6 +393,9 @@ let constructor_levels constructor =
       Some (List.map (fun argument -> level_on_type argument.pca_type) arguments)
   | Pcstr_record _ -> None
 
+let constructor_contract_owner name arity =
+  Printf.sprintf "%s/%d" name arity
+
 let tuple_levels typ =
   match typ.ptyp_desc with
   | Ptyp_tuple components ->
@@ -425,7 +433,8 @@ let collect_catalog structure =
     List.iter
       (fun item ->
         match item.pstr_desc with
-        | Pstr_value (Nonrecursive, bindings) ->
+        | Pstr_value (rec_flag, bindings) ->
+            let inherited_callables = !local_callables in
             List.iter
               (fun binding ->
                 match variable_name binding.pvb_pat with
@@ -440,11 +449,12 @@ let collect_catalog structure =
                     let signature =
                       match function_signature binding.pvb_expr with
                       | Some signature -> Some signature
-                      | None -> (
+                      | None when rec_flag = Nonrecursive -> (
                           match binding.pvb_expr.pexp_desc with
                           | Pexp_ident { txt = Lident target; _ } ->
-                              List.assoc_opt target !local_callables
+                              List.assoc_opt target inherited_callables
                           | _ -> None)
+                      | None -> None
                     in
                     Option.iter
                       (fun signature ->
@@ -457,6 +467,23 @@ let collect_catalog structure =
                           :: !callables)
                       signature)
               bindings
+        | Pstr_primitive value ->
+            let name = value.pval_name.txt in
+            let qualified = path_name (path @ [ name ]) in
+            values :=
+              { catalog_name = qualified;
+                catalog_loc = value.pval_loc;
+                catalog_contract = level_on_attributes value.pval_attributes }
+              :: !values;
+            let signature = signature_formals value.pval_type in
+            if signature <> [] then (
+              local_callables :=
+                replace_local (name, signature) !local_callables;
+              callables :=
+                { catalog_name = qualified;
+                  catalog_loc = value.pval_loc;
+                  catalog_contract = signature }
+                :: !callables)
         | Pstr_type (_, declarations) ->
             List.iter
               (fun declaration ->
@@ -535,10 +562,14 @@ class validator ~catalog =
     val witnesses : Contract.witness list ref = ref []
     val structural_components = ref true
     val module_path : string list ref = ref []
+    val local_modules : string list ref = ref []
 
     method witnesses = List.rev !witnesses
 
     method private add_witness ?(compatible = false) ~loc ~modules ~marker level =
+      if self#is_local_module_path modules then
+        Location.raise_errorf ~loc
+          "cannot authenticate a log-value contract through a local module";
       let expected =
         match level with None -> "ordinary" | Some level -> level_name level
       in
@@ -560,6 +591,10 @@ class validator ~catalog =
       then witnesses := witness :: !witnesses
 
     method private with_context level action = with_ref context (Some level) action
+
+    method private is_local_module_path = function
+      | first :: _ -> List.mem first !local_modules
+      | [] -> false
 
     method private with_bindings ~shadowed additions action =
       let outer =
@@ -725,6 +760,8 @@ class validator ~catalog =
           | None -> reject_unknown name)
       | Pexp_ident { txt; _ } -> (
           match split_qualified txt with
+          | Some (modules, _) when self#is_local_module_path modules ->
+              reject_unknown "local module callee"
           | Some (modules, name) -> (
               match
                 lookup_local ~loc:callee.pexp_loc !module_path
@@ -856,11 +893,12 @@ class validator ~catalog =
 
     method private external_constructor modules name components =
       if List.exists (fun (_, level) -> Option.is_some level) components then
+        let owner = constructor_contract_owner name (List.length components) in
         List.iteri
           (fun index (loc, level) ->
             self#add_witness ~loc ~modules
               ~marker:
-                (Contract.marker_name ~kind:"constructor" ~owner:name
+                (Contract.marker_name ~kind:"constructor" ~owner
                    ~slot:(Contract.Positional (index + 1)) ())
               level)
           components
@@ -1018,6 +1056,24 @@ class validator ~catalog =
                     tuple_types := saved_tuple_types;
                     tuple_values := saved_tuple_values)
                   traverse_item
+            | Pstr_value (Recursive, bindings_here) ->
+                let shadowed =
+                  List.concat_map
+                    (fun binding -> pattern_names binding.pvb_pat)
+                    bindings_here
+                in
+                let recursive_callables =
+                  List.filter_map
+                    (fun binding ->
+                      match
+                        ( variable_name binding.pvb_pat,
+                          function_signature binding.pvb_expr )
+                      with
+                      | Some name, Some signature -> Some (name, signature)
+                      | _ -> None)
+                    bindings_here
+                in
+                self#with_callables ~shadowed recursive_callables traverse_item
             | _ -> traverse_item ());
             let additions =
               match item.pstr_desc with
@@ -1029,7 +1085,7 @@ class validator ~catalog =
             in
             let shadowed, callable_additions =
               match item.pstr_desc with
-              | Pstr_value (Nonrecursive, bindings_here) ->
+              | Pstr_value (rec_flag, bindings_here) ->
                   ( List.concat_map
                       (fun binding -> pattern_names binding.pvb_pat)
                       bindings_here,
@@ -1041,14 +1097,20 @@ class validator ~catalog =
                             let signature =
                               match function_signature binding.pvb_expr with
                               | Some signature -> Some signature
-                              | None -> (
+                              | None when rec_flag = Nonrecursive -> (
                                   match binding.pvb_expr.pexp_desc with
                                   | Pexp_ident { txt = Lident target; _ } ->
                                       List.assoc_opt target !callables
                                   | _ -> None)
+                              | None -> None
                             in
                             Option.map (fun signature -> (name, signature)) signature)
                       bindings_here )
+              | Pstr_primitive value ->
+                  let formals = signature_formals value.pval_type in
+                  ( [ value.pval_name.txt ],
+                    if formals = [] then []
+                    else [ (value.pval_name.txt, formals) ] )
               | _ -> ([], [])
             in
             bindings :=
@@ -1164,6 +1226,13 @@ class validator ~catalog =
           self#validate_field_use ~loc:expression.pexp_loc txt annotation
       | _ -> ());
       match expression.pexp_desc with
+      | Pexp_letmodule (name, module_expression, body) ->
+          self#module_expr module_expression;
+          (match name.txt with
+          | Some name ->
+              with_ref local_modules (name :: !local_modules) (fun () ->
+                  self#expression body)
+          | None -> self#expression body)
       | Pexp_extension ({ txt = name; loc }, payload) -> (
           match log_level_of_extension name with
           | None ->
@@ -1185,7 +1254,37 @@ class validator ~catalog =
             Location.raise_errorf ~loc:expression.pexp_loc
               "a level-gated let must be one nonrecursive binding";
           let outer_tuple_values = !tuple_values in
-          List.iter self#value_binding bindings_here;
+          let recursive_callables =
+            if rec_flag = Recursive then
+              List.filter_map
+                (fun binding ->
+                  match
+                    ( variable_name binding.pvb_pat,
+                      function_signature binding.pvb_expr )
+                  with
+                  | Some name, Some signature -> Some (name, signature)
+                  | _ -> None)
+                bindings_here
+            else []
+          in
+          let recursive_shadowed =
+            List.concat_map
+              (fun binding -> pattern_names binding.pvb_pat)
+              bindings_here
+          in
+          let tuple_additions = ref [] in
+          let validate_binding binding =
+            tuple_values := outer_tuple_values;
+            self#value_binding binding;
+            let names = pattern_names binding.pvb_pat in
+            tuple_additions :=
+              List.filter
+                (fun (name, _) -> List.mem name names)
+                !tuple_values
+              @ !tuple_additions
+          in
+          self#with_callables ~shadowed:recursive_shadowed recursive_callables
+            (fun () -> List.iter validate_binding bindings_here);
           let additions =
             List.concat_map
               (fun binding ->
@@ -1212,12 +1311,13 @@ class validator ~catalog =
                     Option.map (fun signature -> (name, signature)) signature)
               bindings_here
           in
-          let shadowed =
-            List.concat_map
-              (fun binding -> pattern_names binding.pvb_pat)
-              bindings_here
+          let shadowed = recursive_shadowed in
+          let scoped_tuple_values =
+            !tuple_additions
+            @ List.filter
+                (fun (name, _) -> not (List.mem name shadowed))
+                outer_tuple_values
           in
-          let scoped_tuple_values = !tuple_values in
           tuple_values := outer_tuple_values;
           with_ref tuple_values scoped_tuple_values (fun () ->
               self#with_bindings ~shadowed additions (fun () ->
@@ -1416,15 +1516,10 @@ let tuple_component_abi (label, component) =
       contract_name (level_on_type component) ]
 
 let type_abi declaration =
-  let privacy =
-    match declaration.ptype_private with
-    | Private -> "private"
-    | Public -> "public"
-  in
   let descriptor =
     match declaration.ptype_kind with
     | Ptype_record labels ->
-        Some (Contract.abi_contract "record" (privacy :: List.map field_abi labels))
+        Some (Contract.abi_contract "record" (List.map field_abi labels))
     | Ptype_variant constructors ->
         let constructor_abi constructor =
           let result =
@@ -1443,16 +1538,14 @@ let type_abi declaration =
                 (constructor.pcd_name.txt :: result :: List.map field_abi labels)
         in
         Some
-          (Contract.abi_contract "variant"
-             (privacy :: List.map constructor_abi constructors))
+          (Contract.abi_contract "variant" (List.map constructor_abi constructors))
     | Ptype_abstract -> (
         match declaration.ptype_manifest with
         | Some { ptyp_desc = Ptyp_tuple components; _ } ->
             Some
-              (Contract.abi_contract "tuple"
-                 (privacy :: List.map tuple_component_abi components))
+              (Contract.abi_contract "tuple" (List.map tuple_component_abi components))
         | Some _ | None -> None)
-    | Ptype_open -> Some (Contract.abi_contract "open" [ privacy ])
+    | Ptype_open -> Some (Contract.abi_contract "open" [])
     | Ptype_record_unboxed_product _ -> None
   in
   Option.map
@@ -1599,9 +1692,10 @@ let add_type_contracts contracts declaration =
               List.fold_left
                 (fun contracts (slot, level) ->
                   let name = constructor.pcd_name.txt in
+                  let owner = constructor_contract_owner name (List.length levels) in
                   let spec =
                     { marker =
-                        Contract.marker_name ~kind:"constructor" ~owner:name
+                        Contract.marker_name ~kind:"constructor" ~owner
                           ~slot ();
                       contract = contract_name level;
                       loc = constructor.pcd_loc }
@@ -1644,6 +1738,7 @@ let structure_contracts structure =
     (fun item ->
       match item.pstr_desc with
       | Pstr_value (rec_flag, bindings) ->
+          let inherited_callables = !callables in
           List.iter
             (fun binding ->
               match variable_name binding.pvb_pat with
@@ -1659,7 +1754,7 @@ let structure_contracts structure =
                     | None when rec_flag = Nonrecursive -> (
                         match binding.pvb_expr.pexp_desc with
                         | Pexp_ident { txt = Lident target; _ } ->
-                            List.assoc_opt target !callables
+                            List.assoc_opt target inherited_callables
                         | _ -> None)
                     | None -> None
                   in
@@ -1740,7 +1835,8 @@ let with_module_abi ~loc contracts =
              [ contract.marker; contract.contract ])
   in
   { marker =
-      Contract.marker_name ~kind:"module_abi" ~owner:"compilation_unit" ();
+      Contract.marker_name ~kind:"module_abi"
+        ~owner:(Contract.compilation_unit_owner loc) ();
     contract = Contract.abi_contract "module" entries;
     loc }
   :: contracts
@@ -1773,7 +1869,8 @@ class rewriter ~static_level =
           with_ref signature_root false (fun () -> super#structure_item item))
 
     method private mapped_signature_item item =
-      with_ref signature_root false (fun () -> super#signature_item item)
+      with_ref contract_root false (fun () ->
+          with_ref signature_root false (fun () -> super#signature_item item))
 
     method private keep level = survives ~static_level level
 
@@ -1789,6 +1886,7 @@ class rewriter ~static_level =
 
     method! structure structure =
       let declarations = structure_type_declarations structure in
+      List.iter Contract.reject_reserved_source_declaration declarations;
       let loc =
         match structure with item :: _ -> item.pstr_loc | [] -> Location.none
       in
@@ -1839,6 +1937,7 @@ class rewriter ~static_level =
 
     method! signature signature =
       let declarations = signature_type_declarations signature in
+      List.iter Contract.reject_reserved_source_declaration declarations;
       let loc =
         match signature.psg_items with
         | item :: _ -> item.psig_loc

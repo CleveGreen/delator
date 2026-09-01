@@ -37,6 +37,17 @@ let abi_component kind components =
 let abi_contract kind components =
   "abi_" ^ encode_name (abi_component kind components)
 
+let compilation_unit_owner loc =
+  let filename = Filename.basename loc.Location.loc_start.pos_fname in
+  let stem =
+    if Filename.check_suffix filename ".mli" then
+      Filename.chop_suffix filename ".mli"
+    else if Filename.check_suffix filename ".ml" then
+      Filename.chop_suffix filename ".ml"
+    else filename
+  in
+  if String.equal stem "" then "anonymous" else stem
+
 let is_internal_name name =
   let prefix = "delator_internal_log_value_" in
   String.length name >= String.length prefix
@@ -100,6 +111,15 @@ let is_generated_contract declaration =
              | _ -> false)
            rows
   | _ -> false
+
+let reject_reserved_source_declaration declaration =
+  if
+    is_internal_name declaration.ptype_name.txt
+    && not (is_generated_contract declaration)
+  then
+    Location.raise_errorf ~loc:declaration.ptype_loc
+      "type name %s is reserved for Delator log-value contracts"
+      declaration.ptype_name.txt
 
 let should_emit_contract declarations ~name ~loc =
   match

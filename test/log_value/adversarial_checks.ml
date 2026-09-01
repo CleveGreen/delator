@@ -308,6 +308,29 @@ let check_provider_rejection ~ocamlc ~ppx ~diagnostics client_name =
           incr checked))
     levels
 
+let check_include ~ocamlc ~ppx =
+  let source_directory = "adversarial_interfaces" in
+  let provider = Filename.concat source_directory "include_provider.ml" in
+  let client = Filename.concat source_directory "include_client.ml" in
+  List.iter
+    (fun level ->
+      with_directory (fun directory ->
+          let local_provider = Filename.concat directory "include_provider.ml" in
+          let local_client = Filename.concat directory "include_client.ml" in
+          let output = Filename.concat directory "compile.out" in
+          copy provider local_provider;
+          copy client local_client;
+          let compile_one source =
+            compile ~ocamlc ~ppx ~level ~output
+              [ "-c"; "-I"; directory; source ]
+          in
+          if compile_one local_provider <> 0 then
+            fail "%s/%s failed:\n%s" provider level (read output)
+          else if compile_one local_client <> 0 then
+            fail "%s/%s failed:\n%s" client level (read output);
+          incr checked))
+    levels
+
 let check_interface_abi ~ocamlc ~ppx ~marker ~hidden_levels stem =
   let source_directory = "adversarial_interfaces" in
   let implementation = Filename.concat source_directory (stem ^ ".ml") in
@@ -367,6 +390,14 @@ let rejected =
       "consume expects [@log_value.debug], not [@log_value.trace]" );
     ( "adversarial_calls/partial_suffix_timing.ml",
       "partial application of f leaves only level-gated" );
+    ( "adversarial_calls/local_module_callee.ml",
+      "cannot authenticate [@log_value.trace] actual for local module callee" );
+    ( "adversarial_calls/include_gated_callee.ml",
+      "cannot authenticate [@log_value.trace] actual for consume" );
+    ( "adversarial_calls/open_gated_callee.ml",
+      "cannot authenticate [@log_value.trace] actual for consume" );
+    ( "adversarial_calls/qualified_gated_alias.ml",
+      "cannot authenticate [@log_value.trace] actual for consume" );
     ( "adversarial_variants/positional_variant_drift.ml",
       "constructor Payload component 3 is not level-gated" );
     ( "adversarial_variants/positional_tuple_drift.ml",
@@ -392,11 +423,20 @@ let rejected =
     ( "adversarial_patterns_records/fully_gated_anonymous_function.ml",
       "a level-gated function must retain at least one ordinary formal" );
     ( "adversarial_patterns_records/fully_gated_returned_function.ml",
-      "a level-gated function must retain at least one ordinary formal" ) ]
+      "a level-gated function must retain at least one ordinary formal" );
+    ( "adversarial_interfaces/reserved_contract_name.ml",
+      "type name delator_internal_log_value_witness_0 is reserved" ) ]
 
 let accepted =
   [ "adversarial_calls/qualified_positive.ml";
+    "adversarial_calls/recursive_top_level.ml";
+    "adversarial_calls/recursive_local.ml";
+    "adversarial_calls/external_formal.ml";
+    "adversarial_calls/nonrecursive_callable_group.ml";
     "adversarial_interfaces/inline_module_signature.ml";
+    "adversarial_interfaces/first_class_module.ml";
+    "adversarial_variants/constructor_arity_contract.ml";
+    "adversarial_variants/nonrecursive_group_scope.ml";
     "adversarial_variants/constructor_arity_expression.ml";
     "adversarial_variants/constructor_arity_pattern.ml";
     "adversarial_variants/ordinary_pair_control.ml";
@@ -428,13 +468,21 @@ let () =
       "function_case";
       "forwarding_alias";
       "qualified_alias";
-      "nested_module" ];
+      "nested_module";
+      "nested_gated_module";
+      "module_alias";
+      "functor";
+      "signature_payload";
+      "module_type_of";
+      "private_record";
+      "gated_function_case" ];
   List.iter (check_interface ~ocamlc ~ppx ~reject:true)
     [ "reordered"; "mismatched"; "three_levels"; "record_drift" ];
   check_interface_client ~ocamlc ~ppx "subtyping";
   check_interface_client_rejection ~ocamlc ~ppx
     ~diagnostic:"Delator_log_value_debug" "subtyping"
     "subtyping_bad_client.ml";
+  check_include ~ocamlc ~ppx;
   List.iter
     (fun (client, diagnostics) ->
       check_provider_rejection ~ocamlc ~ppx ~diagnostics client)

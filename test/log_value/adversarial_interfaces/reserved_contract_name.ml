@@ -1,0 +1,1 @@
+type delator_internal_log_value_witness_0 = unit
