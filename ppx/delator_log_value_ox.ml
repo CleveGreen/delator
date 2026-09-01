@@ -840,10 +840,18 @@ class validator ~catalog =
                 actual)
         components
 
-    method private constructor_level ~loc path =
+    method private constructor_level ~loc ~arity path =
       match longident_parts path with
-      | Some [ name ] -> lookup name !constructors
-      | Some parts -> lookup_local ~loc !module_path parts catalog.constructors
+      | Some [ name ] ->
+          lookup name
+            (List.filter
+               (fun (_, levels) -> List.length levels = arity)
+               !constructors)
+      | Some parts ->
+          lookup_local ~loc !module_path parts
+            (List.filter
+               (fun entry -> List.length entry.catalog_contract = arity)
+               catalog.constructors)
       | None -> Unknown
 
     method private external_constructor modules name components =
@@ -859,7 +867,10 @@ class validator ~catalog =
 
     method private validate_constructor path components =
       let name = final_longident_name path in
-      match self#constructor_level ~loc:(fst (List.hd components)) path with
+      match
+        self#constructor_level ~loc:(fst (List.hd components))
+          ~arity:(List.length components) path
+      with
       | Known expected ->
           self#validate_components ~site:("constructor " ^ name) expected
             components

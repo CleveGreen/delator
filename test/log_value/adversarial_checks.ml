@@ -397,6 +397,8 @@ let rejected =
 let accepted =
   [ "adversarial_calls/qualified_positive.ml";
     "adversarial_interfaces/inline_module_signature.ml";
+    "adversarial_variants/constructor_arity_expression.ml";
+    "adversarial_variants/constructor_arity_pattern.ml";
     "adversarial_variants/ordinary_pair_control.ml";
     "adversarial_variants/lexical_tuple_alias.ml";
     "adversarial_variants/named_tuple_escape_control.ml";
