@@ -432,6 +432,7 @@ let accepted =
     "adversarial_calls/recursive_top_level.ml";
     "adversarial_calls/recursive_local.ml";
     "adversarial_calls/external_formal.ml";
+    "adversarial_calls/gated_external_call.ml";
     "adversarial_calls/nonrecursive_callable_group.ml";
     "adversarial_interfaces/inline_module_signature.ml";
     "adversarial_interfaces/first_class_module.ml";
@@ -479,6 +480,7 @@ let () =
   List.iter (check_interface ~ocamlc ~ppx ~reject:true)
     [ "reordered"; "mismatched"; "three_levels"; "record_drift" ];
   check_interface_client ~ocamlc ~ppx "subtyping";
+  check_interface_client ~ocamlc ~ppx "ordinary_constructor";
   check_interface_client_rejection ~ocamlc ~ppx
     ~diagnostic:"Delator_log_value_debug" "subtyping"
     "subtyping_bad_client.ml";

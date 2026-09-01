@@ -568,8 +568,10 @@ class validator ~catalog =
     val structural_components = ref true
     val module_path : string list ref = ref []
     val local_modules : string list ref = ref []
+    val binding_only_pattern_components : Location.t list ref = ref []
 
     method witnesses = List.rev !witnesses
+    method binding_only_pattern_components = !binding_only_pattern_components
 
     method private add_witness ?(compatible = false) ~loc ~modules ~marker level =
       if self#is_local_module_path modules then
@@ -735,18 +737,22 @@ class validator ~catalog =
           name
 
     method private external_call modules name arguments =
-      if
-        List.exists
-          (fun (_, argument) -> Option.is_some (level_on_expression argument))
-          arguments
-      then
-        List.iter
-          (fun (key, argument) ->
-            self#add_witness ~loc:argument.pexp_loc ~modules
-              ~marker:
-                (Contract.marker_name ~kind:"function" ~owner:name ~slot:key ())
-              (level_on_expression argument))
-          (argument_slots arguments)
+      List.iter
+        (fun (key, argument) ->
+          match level_on_expression argument with
+          | Some level
+            when not
+                   (Option.value ~default:false
+                      (Option.map
+                         (fun current -> compatible ~context:current level)
+                         !context)) ->
+              self#add_witness ~loc:argument.pexp_loc ~modules
+                ~marker:
+                  (Contract.marker_name ~kind:"function" ~owner:name ~slot:key
+                     ())
+                (Some level)
+          | Some _ | None -> ())
+        (argument_slots arguments)
 
     method private validate_call callee arguments =
       let reject_unknown site =
@@ -897,16 +903,18 @@ class validator ~catalog =
       | None -> Unknown
 
     method private external_constructor modules name components =
-      if List.exists (fun (_, level) -> Option.is_some level) components then
-        let owner = constructor_contract_owner name (List.length components) in
-        List.iteri
-          (fun index (loc, level) ->
+      let owner = constructor_contract_owner name (List.length components) in
+      List.iteri
+        (fun index (loc, level) ->
+          match level with
+          | Some level ->
             self#add_witness ~loc ~modules
               ~marker:
                 (Contract.marker_name ~kind:"constructor" ~owner
                    ~slot:(Contract.Positional (index + 1)) ())
-              level)
-          components
+              (Some level)
+          | None -> ())
+        components
 
     method private validate_constructor path components =
       let name = final_longident_name path in
@@ -933,6 +941,48 @@ class validator ~catalog =
                         ~site:("constructor " ^ name) level)
                     level)
                 components)
+
+    method private validate_constructor_pattern path patterns =
+      let components =
+        List.map
+          (fun pattern -> (pattern.ppat_loc, level_on_pattern pattern))
+          patterns
+      in
+      let name = final_longident_name path in
+      match
+        self#constructor_level ~loc:(fst (List.hd components))
+          ~arity:(List.length components) path
+      with
+      | Known expected ->
+          self#validate_components ~site:("constructor " ^ name) expected
+            components
+      | Ambiguous ->
+          Location.raise_errorf ~loc:(fst (List.hd components))
+            "constructor %s has ambiguous log-value declarations" name
+      | Unknown ->
+          let structural_components =
+            List.map2
+              (fun pattern (loc, level) ->
+                match level with
+                | Some _ when pattern_names pattern <> [] ->
+                    binding_only_pattern_components :=
+                      loc :: !binding_only_pattern_components;
+                    (loc, None)
+                | Some _ | None -> (loc, level))
+              patterns components
+          in
+          (match split_qualified path with
+          | Some (modules, name) ->
+              self#external_constructor modules name structural_components
+          | None ->
+              List.iter
+                (fun (loc, level) ->
+                  Option.iter
+                    (fun level ->
+                      self#cannot_authenticate ~loc
+                        ~site:("constructor " ^ name) level)
+                    level)
+                structural_components)
 
     method private tuple_contract_named name = lookup name !tuple_types
 
@@ -1442,15 +1492,10 @@ class validator ~catalog =
       | Ppat_construct ({ txt = constructor; _ }, Some (_, argument)) -> (
           match argument.ppat_desc with
           | Ppat_tuple components ->
-              self#validate_constructor constructor
-                (List.map
-                   (fun component ->
-                     (component.ppat_loc, level_on_pattern component))
-                   components);
+              self#validate_constructor_pattern constructor components;
               List.iter self#pattern components
           | _ ->
-              self#validate_constructor constructor
-                [ (argument.ppat_loc, level_on_pattern argument) ];
+              self#validate_constructor_pattern constructor [ argument ];
               self#pattern argument)
       | Ppat_tuple components ->
           self#validate_tuple
@@ -1835,7 +1880,7 @@ let signature_type_declarations signature =
       | _ -> [])
     signature
 
-class rewriter ~static_level =
+class rewriter ~static_level ~binding_only_pattern_components =
   object (self)
     inherit Ast_traverse.map as super
 
@@ -1859,7 +1904,10 @@ class rewriter ~static_level =
 
     method private pattern_component pattern =
       match level_on_pattern pattern with
-      | Some level when not (self#keep level) -> None
+      | Some level when not (self#keep level) ->
+          if List.mem pattern.ppat_loc binding_only_pattern_components then
+            Some (ppat_any ~loc:pattern.ppat_loc)
+          else None
       | Some _ | None -> Some (self#pattern pattern)
 
     method! structure structure =
@@ -2208,8 +2256,11 @@ class rewriter ~static_level =
 let rewrite ~static_level structure =
   let validator = new validator ~catalog:(collect_catalog structure) in
   validator#structure structure;
-  (new rewriter ~static_level)#structure structure
+  (new rewriter ~static_level
+     ~binding_only_pattern_components:validator#binding_only_pattern_components)
+    #structure structure
   @ Contract.witness_structure validator#witnesses
 
 let rewrite_signature ~static_level signature =
-  (new rewriter ~static_level)#signature signature
+  (new rewriter ~static_level ~binding_only_pattern_components:[])#signature
+    signature

@@ -4,6 +4,6 @@ module N = struct
   end
 end
 
-let[@log_value.trace] run () =
+let run () =
   let[@log_value.trace] metadata = 7 in
   Suffix_provider.consume ~metadata:(metadata [@log_value.trace]) ()
