@@ -1755,9 +1755,14 @@ class rewriter ~static_level =
     inherit Ast_traverse.map as super
 
     val contract_root = ref true
+    val signature_root = ref true
 
     method private mapped_structure_item item =
-      with_ref contract_root false (fun () -> super#structure_item item)
+      with_ref contract_root false (fun () ->
+          with_ref signature_root false (fun () -> super#structure_item item))
+
+    method private mapped_signature_item item =
+      with_ref signature_root false (fun () -> super#signature_item item)
 
     method private keep level = survives ~static_level level
 
@@ -1828,12 +1833,18 @@ class rewriter ~static_level =
         | item :: _ -> item.psig_loc
         | [] -> Location.none
       in
+      let raw_contracts = signature_contracts signature in
+      let raw_contracts =
+        if !signature_root || raw_contracts <> [] then
+          with_module_abi ~loc raw_contracts
+        else raw_contracts
+      in
       let contracts =
         List.filter
           (fun contract ->
             Contract.should_emit_contract declarations ~name:contract.marker
               ~loc:contract.loc)
-          (with_module_abi ~loc (signature_contracts signature))
+          raw_contracts
       in
       { signature with
         psg_items =
@@ -1843,8 +1854,8 @@ class rewriter ~static_level =
               | Psig_value value -> (
                   match level_on_attributes value.pval_attributes with
                   | Some level when not (self#keep level) -> None
-                  | Some _ | None -> Some (super#signature_item item))
-              | _ -> Some (super#signature_item item))
+                  | Some _ | None -> Some (self#mapped_signature_item item))
+              | _ -> Some (self#mapped_signature_item item))
             signature.psg_items
           @ List.map
               (fun contract ->

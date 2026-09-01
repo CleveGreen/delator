@@ -58,7 +58,7 @@
   warn=2
   error=1
   $ ./adversarial_checks.exe "$(command -v ocamlc)" ./log_value_driver.exe
-  adversarial=261
+  adversarial=271
 
 Level flow is checked before static erasure, so every profile rejects the same
 invalid source.

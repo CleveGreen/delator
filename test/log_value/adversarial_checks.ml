@@ -396,6 +396,7 @@ let rejected =
 
 let accepted =
   [ "adversarial_calls/qualified_positive.ml";
+    "adversarial_interfaces/inline_module_signature.ml";
     "adversarial_variants/ordinary_pair_control.ml";
     "adversarial_variants/lexical_tuple_alias.ml";
     "adversarial_variants/named_tuple_escape_control.ml";
@@ -424,7 +425,8 @@ let () =
       "record_matching";
       "function_case";
       "forwarding_alias";
-      "qualified_alias" ];
+      "qualified_alias";
+      "nested_module" ];
   List.iter (check_interface ~ocamlc ~ppx ~reject:true)
     [ "reordered"; "mismatched"; "three_levels"; "record_drift" ];
   check_interface_client ~ocamlc ~ppx "subtyping";
