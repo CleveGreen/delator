@@ -38,16 +38,20 @@ let absolute path =
   if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path else path
 
 let environment level =
-  let prefix = "DELATOR_TEST_STATIC_LEVEL=" in
+  let overridden = [ "DELATOR_TEST_STATIC_LEVEL="; "OCAML_COLOR=" ] in
   let inherited =
     Unix.environment ()
     |> Array.to_list
     |> List.filter (fun entry ->
            not
-             (String.length entry >= String.length prefix
-             && String.sub entry 0 (String.length prefix) = prefix))
+             (List.exists
+                (fun prefix ->
+                  String.length entry >= String.length prefix
+                  && String.sub entry 0 (String.length prefix) = prefix)
+                overridden))
   in
-  Array.of_list ((prefix ^ level) :: inherited)
+  Array.of_list
+    (("DELATOR_TEST_STATIC_LEVEL=" ^ level) :: "OCAML_COLOR=never" :: inherited)
 
 let run ?level ~output program arguments =
   let descriptor =
