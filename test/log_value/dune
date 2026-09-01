@@ -133,6 +133,11 @@
  (modules matrix_checks)
  (libraries unix))
 
+(executable
+ (name adversarial_checks)
+ (modules adversarial_checks)
+ (libraries unix))
+
 (cram
  (deps
   retained.exe
@@ -154,6 +159,12 @@
   interface_client.exe
   log_value_driver.exe
   matrix_checks.exe
+  adversarial_checks.exe
+  (glob_files adversarial_calls/*.ml)
+  (glob_files adversarial_interfaces/*.ml)
+  (glob_files adversarial_interfaces/*.mli)
+  (glob_files adversarial_variants/*.ml)
+  (glob_files adversarial_patterns_records/*.ml)
   flow_trace_in_debug.ml
   flow_debug_in_info.ml
   bare_use.ml

@@ -33,5 +33,9 @@
  (name delator_ppx)
  (public_name delator.ppx)
  (kind ppx_rewriter)
- (modules delator_ppx delator_ppx_rewriter_selected delator_log_value_selected)
+ (modules
+  delator_ppx
+  delator_ppx_rewriter_selected
+  delator_log_value_contract
+  delator_log_value_selected)
  (libraries ppxlib))

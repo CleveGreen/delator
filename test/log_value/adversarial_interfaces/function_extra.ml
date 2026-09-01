@@ -1,0 +1,1 @@
+let f () (_metadata : int [@log_value.trace]) = 0
