@@ -1482,30 +1482,63 @@ let remove_function_contracts name contracts =
     contracts
 
 let add_value_contract contracts ~loc ~name level =
-  replace_contract
-    { marker = Contract.marker_name ~kind:"value" ~owner:name ();
-      contract = contract_name level;
-      loc }
-    contracts
+  let marker = Contract.marker_name ~kind:"value" ~owner:name () in
+  match level with
+  | None ->
+      List.filter
+        (fun candidate -> not (String.equal candidate.marker marker))
+        contracts
+  | Some _ ->
+      replace_contract { marker; contract = contract_name level; loc } contracts
 
 let add_function_contracts contracts ~loc ~name ~value_level formals =
-  let contracts = remove_function_contracts name contracts in
-  let contracts =
-    { marker = function_abi_marker name;
-      contract = function_abi value_level formals;
-      loc }
-    :: contracts
-  in
-  List.fold_left
-    (fun contracts (slot, level) ->
-      { marker =
-          Contract.marker_name ~kind:"function" ~owner:name ~slot ();
-        contract = contract_name level;
+  if
+    Option.is_none value_level
+    && not (List.exists (fun (_, level) -> Option.is_some level) formals)
+  then contracts
+  else
+    let contracts = remove_function_contracts name contracts in
+    let contracts =
+      { marker = function_abi_marker name;
+        contract = function_abi value_level formals;
         loc }
-      :: contracts)
-    contracts (slot_contracts formals)
+      :: contracts
+    in
+    List.fold_left
+      (fun contracts (slot, level) ->
+        { marker =
+            Contract.marker_name ~kind:"function" ~owner:name ~slot ();
+          contract = contract_name level;
+          loc }
+        :: contracts)
+      contracts (slot_contracts formals)
+
+let type_has_log_value declaration =
+  let label_has_log_value label = Option.is_some (level_on_label label) in
+  match declaration.ptype_kind with
+  | Ptype_record labels -> List.exists label_has_log_value labels
+  | Ptype_variant constructors ->
+      List.exists
+        (fun constructor ->
+          match constructor.pcd_args with
+          | Pcstr_tuple arguments ->
+              List.exists
+                (fun argument -> Option.is_some (level_on_type argument.pca_type))
+                arguments
+          | Pcstr_record labels -> List.exists label_has_log_value labels)
+        constructors
+  | Ptype_abstract -> (
+      match declaration.ptype_manifest with
+      | Some { ptyp_desc = Ptyp_tuple components; _ } ->
+          List.exists
+            (fun (_, component) -> Option.is_some (level_on_type component))
+            components
+      | Some _ | None -> false)
+  | Ptype_open | Ptype_record_unboxed_product _ -> false
 
 let add_type_contracts contracts declaration =
+  if not (type_has_log_value declaration) then contracts
+  else
   let contracts =
     match type_abi declaration with
     | None -> contracts
@@ -1683,6 +1716,24 @@ let signature_contracts signature =
     signature.psg_items;
   List.rev !contracts
 
+let with_module_abi ~loc contracts =
+  let entries =
+    List.sort
+      (fun left right ->
+        match String.compare left.marker right.marker with
+        | 0 -> String.compare left.contract right.contract
+        | order -> order)
+      contracts
+    |> List.map (fun contract ->
+           Contract.abi_component "contract"
+             [ contract.marker; contract.contract ])
+  in
+  { marker =
+      Contract.marker_name ~kind:"module_abi" ~owner:"compilation_unit" ();
+    contract = Contract.abi_contract "module" entries;
+    loc }
+  :: contracts
+
 let structure_type_declarations structure =
   List.concat_map
     (fun item ->
@@ -1703,6 +1754,11 @@ class rewriter ~static_level =
   object (self)
     inherit Ast_traverse.map as super
 
+    val contract_root = ref true
+
+    method private mapped_structure_item item =
+      with_ref contract_root false (fun () -> super#structure_item item)
+
     method private keep level = survives ~static_level level
 
     method private expression_component expression =
@@ -1717,12 +1773,21 @@ class rewriter ~static_level =
 
     method! structure structure =
       let declarations = structure_type_declarations structure in
+      let loc =
+        match structure with item :: _ -> item.pstr_loc | [] -> Location.none
+      in
+      let raw_contracts = structure_contracts structure in
+      let raw_contracts =
+        if !contract_root || raw_contracts <> [] then
+          with_module_abi ~loc raw_contracts
+        else raw_contracts
+      in
       let contracts =
         List.filter
           (fun contract ->
             Contract.should_emit_contract declarations ~name:contract.marker
               ~loc:contract.loc)
-          (structure_contracts structure)
+          raw_contracts
       in
       let structure =
         List.filter_map
@@ -1744,9 +1809,9 @@ class rewriter ~static_level =
                 | [ binding ] -> (
                     match level_on_binding binding with
                     | Some level when not (self#keep level) -> None
-                    | Some _ | None -> Some (super#structure_item item))
-                | _ -> Some (super#structure_item item))
-            | _ -> Some (super#structure_item item))
+                    | Some _ | None -> Some (self#mapped_structure_item item))
+                | _ -> Some (self#mapped_structure_item item))
+            | _ -> Some (self#mapped_structure_item item))
           structure
       in
       structure
@@ -1758,12 +1823,17 @@ class rewriter ~static_level =
 
     method! signature signature =
       let declarations = signature_type_declarations signature in
+      let loc =
+        match signature.psg_items with
+        | item :: _ -> item.psig_loc
+        | [] -> Location.none
+      in
       let contracts =
         List.filter
           (fun contract ->
             Contract.should_emit_contract declarations ~name:contract.marker
               ~loc:contract.loc)
-          (signature_contracts signature)
+          (with_module_abi ~loc (signature_contracts signature))
       in
       { signature with
         psg_items =

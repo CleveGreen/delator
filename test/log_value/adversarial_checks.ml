@@ -420,7 +420,11 @@ let () =
   List.iter (check_acceptance ~ocamlc ~ppx) accepted;
   List.iter (check_runtime ~ocamlc ~ppx) runtime;
   List.iter (check_interface ~ocamlc ~ppx ~reject:false)
-    [ "matching"; "record_matching" ];
+    [ "matching";
+      "record_matching";
+      "function_case";
+      "forwarding_alias";
+      "qualified_alias" ];
   List.iter (check_interface ~ocamlc ~ppx ~reject:true)
     [ "reordered"; "mismatched"; "three_levels"; "record_drift" ];
   check_interface_client ~ocamlc ~ppx "subtyping";
@@ -431,36 +435,32 @@ let () =
     (fun (client, diagnostics) ->
       check_provider_rejection ~ocamlc ~ppx ~diagnostics client)
     [ ( "suffix_shadow_call.ml",
-        [ "delator_internal_log_value_function_636f6e73756d65";
-          "Delator_log_value_trace" ] );
+        [ "delator_internal_log_value_function_636f6e73756d65" ] );
       ( "suffix_shadow_value.ml",
-        [ "delator_internal_log_value_value_76616c7565";
-          "Delator_log_value_trace" ] );
+        [ "delator_internal_log_value_value_76616c7565" ] );
       ( "suffix_shadow_field.ml",
-        [ "delator_internal_log_value_field_6d65746164617461";
-          "Delator_log_value_trace" ] );
+        [ "delator_internal_log_value_field_6d65746164617461" ] );
       ( "suffix_shadow_constructor.ml",
-        [ "delator_internal_log_value_constructor_5061796c6f6164";
-          "Delator_log_value_trace" ] );
+        [ "delator_internal_log_value_constructor_5061796c6f6164" ] );
       ( "suffix_future_rebind.ml",
         [ "cannot authenticate [@log_value.trace] actual" ] ) ];
   List.iter
     (fun (stem, marker, hidden_levels) ->
       check_interface_abi ~ocamlc ~ppx ~marker ~hidden_levels stem)
     [ ( "function_extra",
-        "delator_internal_log_value_function_abi_66",
+        "delator_internal_log_value_module_abi_",
         [ "debug"; "info"; "warn"; "error" ] );
       ( "record_extra",
-        "delator_internal_log_value_type_abi_74",
+        "delator_internal_log_value_module_abi_",
         [ "debug"; "info"; "warn"; "error" ] );
       ( "variant_extra",
-        "delator_internal_log_value_type_abi_74",
+        "delator_internal_log_value_module_abi_",
         [ "debug"; "info"; "warn"; "error" ] );
       ( "optional_label_drift",
-        "delator_internal_log_value_function_abi_66",
+        "delator_internal_log_value_module_abi_",
         [ "debug"; "info"; "warn"; "error" ] );
       ( "interleaved_slots",
-        "delator_internal_log_value_function_abi_66",
+        "delator_internal_log_value_module_abi_",
         [ "error" ] ) ];
   match List.rev !failures with
   | [] -> Printf.printf "adversarial=%d\n" !checked
