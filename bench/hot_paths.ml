@@ -70,6 +70,13 @@ let direct_event () =
   Delator.Runtime.event ~target:"bench" ~level:Debug ~msg:"benchmark event"
     ~fields:[]
 
+let field_event () =
+  Delator.Runtime.event ~target:"bench" ~level:Debug ~msg:"benchmark event"
+    ~fields:
+      [ ("name", Delator.Field.string "value");
+        ("count", Delator.Field.int 41);
+        ("cached", Delator.Field.bool true) ]
+
 let direct_span value () =
   consume
     (Delator.in_span ~level:Debug ~target:"bench" ~name:"span"
@@ -139,6 +146,13 @@ let run name =
   | "tree_event" ->
       Delator.set_default_level Trace;
       report name (iterations_from_env 500_000) direct_event
+  | "tree_event_fields" ->
+      Delator.set_default_level Trace;
+      report name (iterations_from_env 500_000) field_event
+  | "event_fields_null" ->
+      Delator.set_default_level Trace;
+      Delator.Renderer.set_current (module Null_renderer);
+      report name (iterations_from_env 20_000_000) field_event
   | "tree_exit" ->
       report name (iterations_from_env 500_000) tree_exit
   | _ -> invalid_arg ("unknown benchmark: " ^ name)
@@ -146,7 +160,7 @@ let run name =
 let () =
   if Array.length Sys.argv <> 2 then begin
     prerr_endline
-      "usage: hot_paths.exe {baseline|is_enabled|is_enabled_directive|ppx_disabled|event_enabled_null|ppx_enabled_null|instrument_disabled|instrument_inline_disabled|instrument_enabled_null|span_disabled|span_enabled_null|clock_monotonic|clock_tsc|span_enabled_monotonic|span_enabled_tsc|tree_event|tree_exit}";
+      "usage: hot_paths.exe {baseline|is_enabled|is_enabled_directive|ppx_disabled|event_enabled_null|ppx_enabled_null|event_fields_null|instrument_disabled|instrument_inline_disabled|instrument_enabled_null|span_disabled|span_enabled_null|clock_monotonic|clock_tsc|span_enabled_monotonic|span_enabled_tsc|tree_event|tree_event_fields|tree_exit}";
     exit 2
   end;
   run Sys.argv.(1)

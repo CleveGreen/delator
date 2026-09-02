@@ -16,20 +16,6 @@ The runtime and PPX are tested against OxCaml ~5.2.0+ox~ and ppxlib
 ~0.33.0+ox~. A stock OCaml build is also kept working, but OxCaml is the primary
 target and is where the performance-sensitive implementation is tested.
 
-** Install
-
-From a checkout:
-
-#+BEGIN_SRC sh
-
-opam install .
-
-#+END_SRC
-
-Applications add ~delator~ to their libraries and ~delator.ppx~ to their PPX
-pipeline. The package requires OCaml 5.2 or newer, dune 3.17 or newer, and
-ppxlib 0.33 or newer.
-
 ** Design
 
 *** Compile-Time Log Levels
@@ -103,13 +89,38 @@ erasure remains coherent.
 Checking precedes erasure. Instrumentation is a use at its configured level;
 ~[@delator.skip]~ and ~[@@delator.skip_all]~ remove those uses.
 
+Erased actuals require an authenticated formal. Lexical functions, direct
+aliases, and source-local qualified functions are checked structurally.
+Separately compiled qualified paths are checked through manifest, type-only
+contracts emitted into the provider CMI; these contracts generate no runtime
+value. Calls through arbitrary expressions, opened imported names, or functor
+applications cannot carry gated actuals. Record labels and constructors are
+checked by the same rule, and conflicting unqualified declarations are
+rejected rather than guessed. Gated tuple constructions and patterns require an
+explicit named alias in the same lexical structure unless a direct let-bound
+construction, its direct aliases, and its destructuring pattern establish one
+lexical flow. Tuple arity alone is never evidence; unrelated ordinary tuples
+remain ordinary, and qualified imported aliases are not inferred.
+
+Only irrefutable variable or wildcard components may be removed from a pattern.
+Aliases and type constraints are admitted when their nested component remains
+irrefutable. A refutable gated component would weaken the match and is rejected.
+
 Because erasure changes function arity and aggregate layout, the static level
 is part of the compilation-unit ABI. Compile every unit sharing such an
-interface at the same level, passed through dune's ~pps~ arguments.
+interface at the same level, passed through dune's ~pps~ arguments. Each public
+function and structural type receives one aggregate type-only contract encoding
+its complete slot order, labels, and levels, so erased interface drift remains
+an OCaml signature error.
 
-Recursive or grouped gated bindings are unsupported. Functions and records
-must retain at least one ordinary formal or field, so erasure never collapses
-the entire callable or record shape.
+Recursive or grouped gated bindings are unsupported. A function with gated
+formals must retain at least one ordinary formal, and records must retain at
+least one ordinary field. At a structurally known call, a partial application
+whose only unsupplied required formals are gated is rejected because erasure
+could execute the body early. An untyped PPX cannot recover an imported
+callable's omitted formals. Across separate compilation, supply every required
+gated formal and place an ordinary final argument after them to preserve the
+residual call boundary.
 
 *** Low Boilerplate
 
@@ -189,6 +200,42 @@ a string field. Other values use an explicit converter:
 
 #+END_SRC
 
+** Field Values
+
+~Delator.Field~ has two surfaces which grow at different rates.
+
+The producers are an open vocabulary. ~string~, ~int~, ~bool~, ~float~,
+~int64~, ~null~, ~exn~, ~pp~, ~seq~, and ~map~ construct a ~Field.value~, and
+later releases add more. ~seq~ and ~map~ carry a ~?dropped~ count so a caller
+which shows the first elements of a large collection records how many it
+withheld rather than silently presenting a partial value as a complete one.
+
+#+BEGIN_SRC ocaml
+
+let shown, dropped = take 5 identifiers in
+[%log.info "resolved"
+  ~ids:(Delator.Field.seq ~dropped (List.map Delator.Field.int shown))
+  ~ratio:(Delator.Field.float hit_ratio)]
+
+#+END_SRC
+
+Consumers see a closed grammar. ~Field.view~ projects any value, present or
+future, into one of ~Null~, ~Bool~, ~Int~, ~Int64~, ~Float~, ~String~, ~Seq~,
+or ~Map~, which is the shape NDJSON and comparable structured sinks already
+require. A renderer written against ~Field.view~ keeps compiling and keeps
+behaving when the producer vocabulary grows, because every new producer must
+project into a case that renderer already handles.
+
+~Field.render~ and ~Field.add_to_buffer~ are total over every value and need no
+case analysis at all. Text renderers should use ~add_to_buffer~, which writes
+through the domain-local line buffer without an intermediate value.
+Sequences render as ~[1,2,3]~, maps as ~{a=1,b=x}~, and a nonzero dropped count
+appends ~+n~ inside the brackets.
+
+~Field.fold~ predates ~Field.view~ and is deprecated. It still compiles and
+still runs, but it can only observe ~int~ and ~bool~ natively and passes every
+other value through its =~string= case as rendered text.
+
 ** Configuration
 
 - ~DELATOR_LOG=lowering=trace,info~ sets target-prefix directives and the
@@ -245,8 +292,16 @@ that Delator must be rebuilt with Yojson.
 The NDJSON stream contains one object per event, span start, or span end. Every
 object has ~kind~, ~target~, ~span_id~, ~parent_span_id~, ~level~, ~message~,
 and ~fields~ members. Span ends additionally contain ~duration_ns~. Missing
-context is JSON ~null~, strings are escaped by Yojson, and integer and boolean
-fields remain JSON numbers and booleans.
+context is JSON ~null~, and strings are escaped by Yojson.
+
+Field values keep their structure. Integers, floats, and booleans remain JSON
+numbers and booleans, ~int64~ is written as an unquoted literal so 64-bit
+values survive, and sequences and maps become JSON arrays and objects. A
+sequence or map with a nonzero dropped count becomes
+~{"shown": ..., "dropped": n}~ instead, so a truncated value is never mistaken
+for a complete one. Standard JSON cannot express a non-finite float, so ~nan~,
+~infinity~, and ~neg_infinity~ are written as the strings ~"NaN"~,
+~"Infinity"~, and ~"-Infinity"~ rather than failing the emit.
 
 ** OxCaml / OCaml Compatibility
 
@@ -354,9 +409,11 @@ immediate token. It is not an equivalent-work library comparison. Set
 has no ~ocaml-trace~ equivalent and remains in the separate
 ~static_elision.exe~ benchmark.
 
-~tree_event~ exercises actual rendering and should be run with stderr redirected
-to ~/dev/null~. ~tree_exit~ additionally exercises worst-case signed ~int~ and
-~int64~ formatting.
+~tree_event~ and ~tree_event_fields~ exercise actual rendering and should be run
+with stderr redirected to ~/dev/null~. ~tree_event_fields~ measures string,
+integer, and boolean field formatting; ~event_fields_null~ isolates the
+construction of the same fields from their rendering. ~tree_exit~ additionally
+exercises worst-case signed ~int~ and ~int64~ formatting.
 
 The pinned measurements and rejected optimization experiments are recorded in
 [[file:bench/RESULTS.org][bench/RESULTS.org]].

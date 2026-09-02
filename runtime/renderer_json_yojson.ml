@@ -17,14 +17,30 @@ let json_of_option json_of_value = function
   | None -> `Null
   | Some value -> json_of_value value
 
-let json_of_field (name, value) =
-  let value =
-    Field.fold value
-      ~string:(fun value -> `String value)
-      ~int:(fun value -> `Int value)
-      ~bool:(fun value -> `Bool value)
-  in
-  (name, value)
+let json_of_float value =
+  match classify_float value with
+  | FP_nan -> `String "NaN"
+  | FP_infinite -> `String (if value > 0. then "Infinity" else "-Infinity")
+  | FP_zero | FP_normal | FP_subnormal -> `Float value
+
+let rec json_of_value value =
+  match Field.view value with
+  | Field.View.Null -> `Null
+  | Field.View.Bool value -> `Bool value
+  | Field.View.Int value -> `Int value
+  | Field.View.Int64 value -> `Intlit (Int64.to_string value)
+  | Field.View.Float value -> json_of_float value
+  | Field.View.String value -> `String value
+  | Field.View.Seq { shown; dropped } ->
+      let shown = `List (List.map json_of_value shown) in
+      if dropped = 0 then shown
+      else `Assoc [ ("shown", shown); ("dropped", `Int dropped) ]
+  | Field.View.Map { shown; dropped } ->
+      let shown = `Assoc (List.map json_of_field shown) in
+      if dropped = 0 then shown
+      else `Assoc [ ("shown", shown); ("dropped", `Int dropped) ]
+
+and json_of_field (name, value) = (name, json_of_value value)
 
 let json_of_fields fields = `Assoc (List.map json_of_field fields)
 

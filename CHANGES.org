@@ -1,4 +1,4 @@
-* 0.1.0 - 2026-08-30
+* 0.1.0 - 2026-09-01
 
 Initial public release.
 
@@ -14,3 +14,14 @@ Initial public release.
 - Monotonic span timing with an opt-in calibrated invariant-TSC clock.
 - Optional clock-free spans and reusable domain-local span stacks for a
   zero-allocation enabled span path.
+- ~Field.view~ projects any field value into a closed grammar of ~Null~,
+  ~Bool~, ~Int~, ~Int64~, ~Float~, ~String~, ~Seq~, and ~Map~, so a renderer
+  keeps compiling and keeps behaving as the producer vocabulary grows.
+- New field producers ~float~, ~int64~, ~null~, ~seq~, and ~map~. Sequences and
+  maps carry a ~?dropped~ count for values shown only in part.
+- ~Field.bool~ and ~Field.null~ are immediates and allocate nothing.
+- NDJSON writes sequences and maps as arrays and objects, ~int64~ as an
+  unquoted literal, a truncated container as ~{"shown": ..., "dropped": n}~,
+  and non-finite floats as strings instead of failing the emit.
+- ~Field.fold~ is deprecated in favour of ~Field.view~. It continues to work
+  and renders everything outside ~int~ and ~bool~ through its =~string= case.

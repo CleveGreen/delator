@@ -96,6 +96,50 @@ let test_schema (module Json : Delator.Renderer.S) =
   in
   assert (json = expected)
 
+let test_field_grammar (module Json : Delator.Renderer.S) =
+  let module Field = Delator.Field in
+  let lines =
+    capture (fun () ->
+        Json.on_event ~span:None ~target:"grammar" ~level:Delator.Info
+          ~msg:"kinds"
+          ~fields:
+            [ ("null", Field.null);
+              ("bool", Field.bool true);
+              ("int", Field.int 3);
+              ("int64", Field.int64 Int64.max_int);
+              ("float", Field.float 1.5);
+              ("not_a_number", Field.float nan);
+              ("infinity", Field.float infinity);
+              ("negative_infinity", Field.float neg_infinity);
+              ("string", Field.string "text");
+              ("seq", Field.seq [ Field.int 1; Field.int 2 ]);
+              ("truncated_seq", Field.seq ~dropped:97 [ Field.int 1 ]);
+              ("map", Field.map [ ("inner", Field.bool false) ]);
+              ("truncated_map", Field.map ~dropped:2 [ ("inner", Field.null) ]) ];
+        Json.on_exit ~id:0 ~duration_ns:0L)
+  in
+  let expected =
+    `Assoc
+      [ ("null", `Null);
+        ("bool", `Bool true);
+        ("int", `Int 3);
+        ("int64", `Intlit (Int64.to_string Int64.max_int));
+        ("float", `Float 1.5);
+        ("not_a_number", `String "NaN");
+        ("infinity", `String "Infinity");
+        ("negative_infinity", `String "-Infinity");
+        ("string", `String "text");
+        ("seq", `List [ `Int 1; `Int 2 ]);
+        ( "truncated_seq",
+          `Assoc [ ("shown", `List [ `Int 1 ]); ("dropped", `Int 97) ] );
+        ("map", `Assoc [ ("inner", `Bool false) ]);
+        ( "truncated_map",
+          `Assoc
+            [ ("shown", `Assoc [ ("inner", `Null) ]); ("dropped", `Int 2) ] ) ]
+  in
+  let records = List.map Yojson.Safe.from_string lines in
+  assert (member "fields" (find_record ~kind:"event" ~message:"kinds" records) = expected)
+
 type gate = {
   mutex : Mutex.t;
   condition : Condition.t;
@@ -175,6 +219,7 @@ let test_domain_isolation (module Json : Delator.Renderer.S) =
 let run () =
   let renderer = Option.get Delator.Renderer.json in
   test_schema renderer;
+  test_field_grammar renderer;
   for _ = 1 to 32 do
     test_domain_isolation renderer
   done

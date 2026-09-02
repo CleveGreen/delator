@@ -12,3 +12,7 @@
 (test
  (name safety_check)
  (libraries delator))
+
+(test
+ (name field_check)
+ (libraries delator))
